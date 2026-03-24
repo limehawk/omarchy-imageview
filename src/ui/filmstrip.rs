@@ -205,7 +205,23 @@ impl Filmstrip {
             self.store.append(&FilmstripItem::new(path, *idx));
         }
 
+        // Set selection to current index immediately
+        let current = self.state.borrow().index as u32;
+        if current < self.store.n_items() {
+            self.selection.set_selected(current);
+        }
+
         self.loading.set(false);
+
+        // Scroll to current AFTER GTK has laid out the items (needs a frame delay)
+        let list_view = self.list_view.clone();
+        let selection = self.selection.clone();
+        let idx = current;
+        glib::idle_add_local_once(move || {
+            if idx < selection.n_items() {
+                list_view.scroll_to(idx, gtk4::ListScrollFlags::FOCUS, None);
+            }
+        });
 
         // Start async thumbnail loading with a bounded worker pool
         self.load_thumbnails(&paths);
@@ -309,8 +325,13 @@ impl Filmstrip {
         let pos = index as u32;
         if pos < self.store.n_items() {
             self.selection.set_selected(pos);
-            self.list_view
-                .scroll_to(pos, gtk4::ListScrollFlags::NONE, None);
+
+            // Defer scroll to after layout
+            let lv = self.list_view.clone();
+            let p = pos;
+            glib::idle_add_local_once(move || {
+                lv.scroll_to(p, gtk4::ListScrollFlags::FOCUS, None);
+            });
 
             // Update CSS classes on visible items
             for (&idx, picture) in self.bound_widgets.borrow().iter() {
