@@ -3,6 +3,7 @@ use gtk4::{self, gdk, gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::core::folder::FolderMonitor;
 use crate::state::app_state::{AppState, ViewMode};
 use super::grid_view::GridView;
 use super::info_panel::InfoPanel;
@@ -18,6 +19,7 @@ pub struct ImageViewerWindow {
     single_view: Rc<RefCell<SingleView>>,
     toolbar: Rc<Toolbar>,
     info_panel: Rc<InfoPanel>,
+    _monitor: RefCell<Option<FolderMonitor>>,
 }
 
 impl ImageViewerWindow {
@@ -80,6 +82,7 @@ impl ImageViewerWindow {
             single_view: single_view.clone(),
             toolbar: toolbar.clone(),
             info_panel: info_panel.clone(),
+            _monitor: RefCell::new(None),
         }));
 
         // Wire grid activate -> switch to single view
@@ -390,6 +393,8 @@ impl ImageViewerWindow {
         self.toolbar.update_grid_mode();
         // Hide info panel when switching to grid
         self.info_panel.container.set_visible(false);
+        // Start filesystem monitoring
+        self.start_monitor();
     }
 
     pub fn show_single(&self) {
@@ -397,6 +402,36 @@ impl ImageViewerWindow {
         self.stack.set_visible_child_name("single");
         self.single_view.borrow().load();
         self.toolbar.update_single_mode();
+        // Start filesystem monitoring
+        self.start_monitor();
+    }
+
+    fn start_monitor(&self) {
+        let folder = self.state.borrow().current_folder.clone();
+        if let Some(folder_path) = folder {
+            let state = self.state.clone();
+            let grid_view = self.grid_view.clone();
+            let single_view = self.single_view.clone();
+            let toolbar = self.toolbar.clone();
+            let monitor = FolderMonitor::new(&folder_path, move || {
+                let current = state.borrow().current_file().map(|p| p.to_path_buf());
+                if let Some(ref folder) = state.borrow().current_folder.clone() {
+                    state.borrow_mut().load_folder(folder, current.as_deref());
+                }
+                let mode = state.borrow().view_mode;
+                match mode {
+                    ViewMode::Grid => {
+                        grid_view.load();
+                        toolbar.update_grid_mode();
+                    }
+                    ViewMode::Single => {
+                        single_view.borrow().refresh_image();
+                        toolbar.update_single_mode();
+                    }
+                }
+            });
+            *self._monitor.borrow_mut() = monitor;
+        }
     }
 
     pub fn present(&self) {

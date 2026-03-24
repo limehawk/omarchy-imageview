@@ -81,6 +81,7 @@ struct ThumbResult {
 // GridView — manages the gtk4::GridView and async thumbnail loading
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct GridView {
     pub container: gtk4::ScrolledWindow,
     store: gio::ListStore,
