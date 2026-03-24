@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{self, gdk, glib};
+use gtk4::{self, gdk, gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -95,6 +95,8 @@ impl ImageViewerWindow {
         // Wire toolbar action callback
         {
             let viewer_ref = viewer.clone();
+            let single_ref2 = single_view.clone();
+            let state_ref2 = state.clone();
             toolbar.set_on_action(move |action| {
                 match action {
                     "info" => {
@@ -107,8 +109,31 @@ impl ImageViewerWindow {
                             panel.update(path.as_deref());
                         }
                     }
-                    // Stubs for future tasks
-                    "rotate" | "copy" | "trash" => {}
+                    "trash" => {
+                        let path = state_ref2.borrow().current_file().map(|p| p.to_path_buf());
+                        if let Some(path) = path {
+                            if crate::actions::file_ops::trash_file(&path) {
+                                state_ref2.borrow_mut().remove_file(&path);
+                                single_ref2.borrow().refresh_image();
+                                let v = viewer_ref.borrow();
+                                v.toolbar.update_single_mode();
+                            }
+                        }
+                    }
+                    "rotate" => {
+                        let path = state_ref2.borrow().current_file().map(|p| p.to_path_buf());
+                        if let Some(path) = path {
+                            if crate::actions::file_ops::rotate_image(&path, 90) {
+                                single_ref2.borrow().refresh_image();
+                            }
+                        }
+                    }
+                    "copy" => {
+                        let tex = single_ref2.borrow().current_texture();
+                        if let Some(tex) = tex {
+                            crate::actions::clipboard::copy_texture_to_clipboard(&tex);
+                        }
+                    }
                     _ => {}
                 }
             });
@@ -123,6 +148,7 @@ impl ImageViewerWindow {
 
         controller.connect_key_pressed(move |_ctrl, keyval, _keycode, modifiers| {
             let ctrl = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
+            let shift = modifiers.contains(gdk::ModifierType::SHIFT_MASK);
             let key_name = keyval.name().unwrap_or_default();
             let is_single = state_ref.borrow().view_mode == ViewMode::Single;
 
@@ -217,7 +243,7 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
-                // Zoom keys
+                // Zoom keys (Ctrl+=/+, Ctrl+-, Ctrl+0, Ctrl+1)
                 "plus" | "equal" if is_single && ctrl => {
                     single_ref.borrow().zoom_in();
                     glib::Propagation::Stop
@@ -232,6 +258,121 @@ impl ImageViewerWindow {
                 }
                 "1" if is_single && ctrl => {
                     single_ref.borrow().zoom_to_actual();
+                    glib::Propagation::Stop
+                }
+                // Plain zoom keys (no modifier)
+                "plus" | "equal" if is_single && !ctrl => {
+                    single_ref.borrow().zoom_in();
+                    glib::Propagation::Stop
+                }
+                "minus" if is_single && !ctrl => {
+                    single_ref.borrow().zoom_out();
+                    glib::Propagation::Stop
+                }
+                // Delete -> trash current file
+                "Delete" if is_single => {
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        if crate::actions::file_ops::trash_file(&path) {
+                            state_ref.borrow_mut().remove_file(&path);
+                            single_ref.borrow().refresh_image();
+                            let v = viewer_ref.borrow();
+                            v.toolbar.update_single_mode();
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
+                // Ctrl+r -> rotate 90, Ctrl+Shift+r -> rotate 270
+                "r" if ctrl && is_single => {
+                    let degrees = if shift { 270 } else { 90 };
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        if crate::actions::file_ops::rotate_image(&path, degrees) {
+                            single_ref.borrow().refresh_image();
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
+                // Ctrl+Shift+x -> trash and advance
+                "x" if ctrl && shift && is_single => {
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        if crate::actions::file_ops::trash_file(&path) {
+                            state_ref.borrow_mut().remove_file(&path);
+                            single_ref.borrow().refresh_image();
+                            let v = viewer_ref.borrow();
+                            v.toolbar.update_single_mode();
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
+                // Ctrl+c -> copy texture, Ctrl+Shift+c -> copy file path
+                "c" if ctrl && is_single => {
+                    if shift {
+                        let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                        if let Some(path) = path {
+                            crate::actions::clipboard::copy_text_to_clipboard(
+                                &path.display().to_string(),
+                            );
+                        }
+                    } else {
+                        let tex = single_ref.borrow().current_texture();
+                        if let Some(tex) = tex {
+                            crate::actions::clipboard::copy_texture_to_clipboard(&tex);
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
+                // Ctrl+w -> set as wallpaper
+                "w" if ctrl && is_single => {
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        crate::actions::wallpaper::set_wallpaper(&path);
+                    }
+                    glib::Propagation::Stop
+                }
+                // Ctrl+e -> open in external editor
+                "e" if ctrl && is_single => {
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        let _ = std::process::Command::new("xdg-open")
+                            .arg(&path)
+                            .spawn();
+                    }
+                    glib::Propagation::Stop
+                }
+                // F2 -> rename dialog
+                "F2" if is_single => {
+                    let v = viewer_ref.borrow();
+                    show_rename_dialog(
+                        &v.window,
+                        &state_ref,
+                        &single_ref,
+                        &v.toolbar,
+                        &v.info_panel,
+                    );
+                    glib::Propagation::Stop
+                }
+                // Ctrl+m -> move to folder, Ctrl+Shift+m -> copy to folder
+                "m" if ctrl && is_single => {
+                    let v = viewer_ref.borrow();
+                    if shift {
+                        show_folder_dialog(
+                            &v.window,
+                            &state_ref,
+                            &single_ref,
+                            &v.toolbar,
+                            false, // copy mode
+                        );
+                    } else {
+                        show_folder_dialog(
+                            &v.window,
+                            &state_ref,
+                            &single_ref,
+                            &v.toolbar,
+                            true, // move mode
+                        );
+                    }
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,
@@ -261,4 +402,133 @@ impl ImageViewerWindow {
     pub fn present(&self) {
         self.window.present();
     }
+}
+
+fn show_rename_dialog(
+    window: &gtk4::ApplicationWindow,
+    state: &Rc<RefCell<AppState>>,
+    single_view: &Rc<RefCell<SingleView>>,
+    toolbar: &Rc<Toolbar>,
+    info_panel: &Rc<InfoPanel>,
+) {
+    let path = state.borrow().current_file().map(|p| p.to_path_buf());
+    let path = match path {
+        Some(p) => p,
+        None => return,
+    };
+
+    let dialog = gtk4::Window::builder()
+        .title("Rename")
+        .transient_for(window)
+        .modal(true)
+        .default_width(400)
+        .build();
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    vbox.set_margin_top(12);
+    vbox.set_margin_bottom(12);
+    vbox.set_margin_start(12);
+    vbox.set_margin_end(12);
+
+    let entry = gtk4::Entry::new();
+    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    entry.set_text(&filename);
+    // Select just the stem, not extension
+    let stem_len = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .len();
+    entry.select_region(0, stem_len as i32);
+    vbox.append(&entry);
+
+    let btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    btn_box.set_halign(gtk4::Align::End);
+    let cancel = gtk4::Button::with_label("Cancel");
+    let ok = gtk4::Button::with_label("Rename");
+    ok.add_css_class("suggested-action");
+    btn_box.append(&cancel);
+    btn_box.append(&ok);
+    vbox.append(&btn_box);
+
+    dialog.set_child(Some(&vbox));
+
+    let dialog_cancel = dialog.clone();
+    cancel.connect_clicked(move |_| dialog_cancel.close());
+
+    // Wire ok button to perform rename
+    let do_rename = {
+        let dialog = dialog.clone();
+        let state = state.clone();
+        let single_view = single_view.clone();
+        let toolbar = toolbar.clone();
+        let info_panel = info_panel.clone();
+        let path = path.clone();
+        let entry = entry.clone();
+        move || {
+            let new_name = entry.text().to_string();
+            if new_name.is_empty() || new_name == path.file_name().unwrap_or_default().to_string_lossy().as_ref() {
+                dialog.close();
+                return;
+            }
+            if let Some(new_path) = crate::actions::file_ops::rename_file(&path, &new_name) {
+                // Update state: remove old, re-scan folder to pick up new name
+                let folder = path.parent().map(|p| p.to_path_buf());
+                if let Some(folder) = folder {
+                    state.borrow_mut().load_folder(&folder, Some(&new_path));
+                }
+                single_view.borrow().refresh_image();
+                toolbar.update_single_mode();
+                if info_panel.container.is_visible() {
+                    let p = state.borrow().current_file().map(|p| p.to_path_buf());
+                    info_panel.update(p.as_deref());
+                }
+            }
+            dialog.close();
+        }
+    };
+
+    let do_rename_ok = do_rename.clone();
+    ok.connect_clicked(move |_| do_rename_ok());
+
+    let do_rename_enter = do_rename;
+    entry.connect_activate(move |_| do_rename_enter());
+
+    dialog.present();
+}
+
+fn show_folder_dialog(
+    window: &gtk4::ApplicationWindow,
+    state: &Rc<RefCell<AppState>>,
+    single_view: &Rc<RefCell<SingleView>>,
+    toolbar: &Rc<Toolbar>,
+    is_move: bool,
+) {
+    let path = state.borrow().current_file().map(|p| p.to_path_buf());
+    let path = match path {
+        Some(p) => p,
+        None => return,
+    };
+
+    let file_dialog = gtk4::FileDialog::new();
+    file_dialog.set_title(if is_move { "Move to folder" } else { "Copy to folder" });
+
+    let state = state.clone();
+    let single_view = single_view.clone();
+    let toolbar = toolbar.clone();
+    file_dialog.select_folder(Some(window), gio::Cancellable::NONE, move |result| {
+        if let Ok(folder) = result {
+            if let Some(dest_dir) = folder.path() {
+                if is_move {
+                    if crate::actions::file_ops::move_file(&path, &dest_dir).is_some() {
+                        state.borrow_mut().remove_file(&path);
+                        single_view.borrow().refresh_image();
+                        toolbar.update_single_mode();
+                    }
+                } else {
+                    crate::actions::file_ops::copy_file(&path, &dest_dir);
+                }
+            }
+        }
+    });
 }
