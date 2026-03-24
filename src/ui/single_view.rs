@@ -186,11 +186,11 @@ impl SingleView {
                         &bytes,
                         (w * 4) as usize,
                     );
+                    // Always reset to fit mode on image load
+                    picture.set_size_request(-1, -1);
+                    picture.set_content_fit(gtk4::ContentFit::Contain);
+                    picture.set_can_shrink(true);
                     picture.set_paintable(Some(&texture));
-                    if state_rc.borrow().zoom_fit {
-                        picture.set_content_fit(gtk4::ContentFit::Contain);
-                        picture.set_can_shrink(true);
-                    }
                     *current_texture.borrow_mut() = Some(texture.upcast());
                     glib::ControlFlow::Break
                 }
