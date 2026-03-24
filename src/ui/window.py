@@ -8,6 +8,7 @@ from gi.repository import Gtk, Gdk
 from ..state.app_state import AppState
 from .theme import load_theme
 from .grid_view import GridView
+from .single_view import SingleView
 
 
 class ImageViewerWindow(Gtk.ApplicationWindow):
@@ -30,12 +31,10 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         self._grid_view = GridView(state)
         self._grid_view.connect("image-activated", self._on_image_activated)
 
-        # Placeholder for single view (replaced in later task)
-        self._single_placeholder = Gtk.Label(label="Single View")
-        self._single_placeholder.add_css_class("empty-state")
+        self._single_view = SingleView(state)
 
         self._stack.add_named(self._grid_view, "grid")
-        self._stack.add_named(self._single_placeholder, "single")
+        self._stack.add_named(self._single_view, "single")
 
         self._main_box.append(self._stack)
         self.set_child(self._main_box)
@@ -60,6 +59,7 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
     def show_single(self):
         self.state.view_mode = "single"
         self._stack.set_visible_child_name("single")
+        self._single_view.load()
 
     def _on_image_activated(self, grid_view, index):
         self.state.index = index
@@ -94,8 +94,28 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         if key in ("F11", "f") and not ctrl:
             if self.is_fullscreen():
                 self.unfullscreen()
+                self._single_view.set_filmstrip_visible(True)
             else:
                 self.fullscreen()
+                self._single_view.set_filmstrip_visible(False)
             return True
+
+        if self.state.view_mode == "single":
+            if key in ("Left", "Up"):
+                self.state.navigate_prev()
+                self._single_view.refresh_image()
+                return True
+            if key in ("Right", "Down"):
+                self.state.navigate_next()
+                self._single_view.refresh_image()
+                return True
+            if key == "Home":
+                self.state.navigate_to(0)
+                self._single_view.refresh_image()
+                return True
+            if key == "End":
+                self.state.navigate_to(len(self.state.files) - 1)
+                self._single_view.refresh_image()
+                return True
 
         return False
