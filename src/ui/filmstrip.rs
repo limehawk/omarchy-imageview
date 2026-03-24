@@ -3,6 +3,7 @@ use glib::subclass::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{self, gio, glib};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -74,6 +75,7 @@ pub struct Filmstrip {
     list_view: gtk4::ListView,
     state: Rc<RefCell<AppState>>,
     on_select: Rc<RefCell<Option<Box<dyn Fn(u32)>>>>,
+    bound_widgets: Rc<RefCell<HashMap<u32, gtk4::Picture>>>,
 }
 
 impl Filmstrip {
@@ -95,7 +97,10 @@ impl Filmstrip {
             list_item.set_child(Some(&picture));
         });
 
-        factory.connect_bind(|_factory, list_item| {
+        let bound_widgets: Rc<RefCell<HashMap<u32, gtk4::Picture>>> = Rc::new(RefCell::new(HashMap::new()));
+
+        let bound_bind = bound_widgets.clone();
+        factory.connect_bind(move |_factory, list_item| {
             let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let item = list_item.item().and_downcast::<FilmstripItem>().unwrap();
             let picture = list_item.child().and_downcast::<gtk4::Picture>().unwrap();
@@ -103,6 +108,15 @@ impl Filmstrip {
                 picture.set_paintable(Some(&tex));
             } else {
                 picture.set_paintable(gdk::Paintable::NONE);
+            }
+            bound_bind.borrow_mut().insert(item.index(), picture);
+        });
+
+        let bound_unbind = bound_widgets.clone();
+        factory.connect_unbind(move |_factory, list_item| {
+            let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
+            if let Some(item) = list_item.item().and_downcast::<FilmstripItem>() {
+                bound_unbind.borrow_mut().remove(&item.index());
             }
         });
 
@@ -116,6 +130,8 @@ impl Filmstrip {
         scroll.set_min_content_height(72);
         scroll.set_max_content_height(72);
         scroll.set_vexpand(false);
+        // Ensure the scrolled window always takes 72px even if list is empty
+        scroll.set_size_request(-1, 72);
 
         let on_select: Rc<RefCell<Option<Box<dyn Fn(u32)>>>> = Rc::new(RefCell::new(None));
 
@@ -137,6 +153,7 @@ impl Filmstrip {
             list_view,
             state,
             on_select,
+            bound_widgets,
         }
     }
 
@@ -161,11 +178,11 @@ impl Filmstrip {
         }
 
         // Async thumbnail loading
-        let store = self.store.clone();
+        let bound = self.bound_widgets.clone();
 
         for (i, (path_str, _idx)) in paths.iter().enumerate() {
             let path = PathBuf::from(path_str);
-            let store_clone = store.clone();
+            let bound_clone = bound.clone();
             let pos = i as u32;
 
             let (tx, rx) = std::sync::mpsc::channel::<(Vec<u8>, u32, u32)>();
@@ -191,11 +208,9 @@ impl Filmstrip {
                             &bytes,
                             (w * 4) as usize,
                         );
-                        if let Some(obj) = store_clone.item(pos) {
-                            if let Some(item) = obj.downcast_ref::<FilmstripItem>() {
-                                item.set_texture(texture.upcast());
-                                store_clone.items_changed(pos, 1, 1);
-                            }
+                        // Directly update the bound widget if visible
+                        if let Some(picture) = bound_clone.borrow().get(&pos) {
+                            picture.set_paintable(Some(&texture));
                         }
                         glib::ControlFlow::Break
                     }
