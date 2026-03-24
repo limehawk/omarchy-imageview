@@ -17,12 +17,14 @@ from .info_panel import InfoPanel
 from ..actions.file_ops import trash_file, rotate_image
 from ..actions.clipboard import copy_texture_to_clipboard, copy_text_to_clipboard
 from ..actions.wallpaper import set_wallpaper
+from ..core.folder import FolderMonitor
 
 
 class ImageViewerWindow(Gtk.ApplicationWindow):
     def __init__(self, app, state: AppState):
         super().__init__(application=app, title="Image Viewer")
         self.state = state
+        self._monitor = None
         self.set_default_size(1200, 800)
 
         self._apply_theme()
@@ -75,12 +77,30 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         self._stack.set_visible_child_name("grid")
         self._grid_view.load()
         self._toolbar.update_grid_mode()
+        if self.state.current_folder:
+            if self._monitor:
+                self._monitor.stop()
+            self._monitor = FolderMonitor(self.state.current_folder, self._on_folder_changed)
 
     def show_single(self):
         self.state.view_mode = "single"
         self._stack.set_visible_child_name("single")
         self._single_view.load()
         self._toolbar.update_single_mode()
+        if self.state.current_folder:
+            if self._monitor:
+                self._monitor.stop()
+            self._monitor = FolderMonitor(self.state.current_folder, self._on_folder_changed)
+
+    def _on_folder_changed(self):
+        current = self.state.current_file
+        self.state.load_folder(self.state.current_folder, target_file=current)
+        if self.state.view_mode == "grid":
+            self._grid_view.load()
+            self._toolbar.update_grid_mode()
+        else:
+            self._single_view.refresh_image()
+            self._toolbar.update_single_mode()
 
     def _on_image_activated(self, grid_view, index):
         self.state.index = index

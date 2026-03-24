@@ -33,6 +33,11 @@ class ImageViewerApp(Gtk.Application):
         self.win.show_grid()
         self.win.present()
 
+    def do_shutdown(self):
+        if self.state.current_folder:
+            self.state.save()
+        super().do_shutdown()
+
     def do_open(self, files, n_files, hint):
         """Launched with a file argument — single view with filmstrip."""
         if self.win is None:
