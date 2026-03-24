@@ -1,0 +1,6 @@
+pillow-heif
+rawpy
+natsort
+
+[dev]
+pytest
