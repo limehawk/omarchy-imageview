@@ -1,6 +1,9 @@
 """Main application window with view switching."""
 
 import gi
+import subprocess
+import shutil
+from pathlib import Path
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gdk
@@ -150,6 +153,40 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
                     set_wallpaper(path)
                 return True
 
+            # External editor
+            if ctrl and key == "e":
+                path = self.state.current_file
+                if path:
+                    subprocess.Popen(["xdg-open", str(path)])
+                return True
+
+            # Rename
+            if key == "F2":
+                self._do_rename_dialog()
+                return True
+
+            # Move / Copy to folder
+            if ctrl and key == "m":
+                if shift:
+                    self._do_file_dialog("copy")
+                else:
+                    self._do_file_dialog("move")
+                return True
+
+            # Zoom keys
+            if key in ("plus", "equal"):
+                self._single_view._zoom_in()
+                return True
+            if key == "minus":
+                self._single_view._zoom_out()
+                return True
+            if key == "0":
+                self._single_view.zoom_to_fit()
+                return True
+            if key == "1":
+                self._single_view.zoom_to_actual()
+                return True
+
         if ctrl and key == "i":
             visible = not self._info_panel.get_visible()
             self._info_panel.set_visible(visible)
@@ -201,6 +238,91 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         if path:
             rotate_image(path, degrees)
             self._single_view.refresh_image()
+
+    def _do_rename_dialog(self):
+        path = self.state.current_file
+        if not path:
+            return
+
+        dialog = Gtk.Dialog()
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.set_title("Rename File")
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OK, Gtk.ResponseType.OK,
+        )
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_top(10)
+        box.set_margin_bottom(10)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+
+        label = Gtk.Label(label="New filename:")
+        entry = Gtk.Entry()
+        entry.set_text(path.name)
+        entry.set_activates_default(True)
+
+        box.append(label)
+        box.append(entry)
+
+        dialog.get_content_area().append(box)
+
+        def on_response(d, response_id):
+            if response_id == Gtk.ResponseType.OK:
+                new_name = entry.get_text()
+                if new_name and new_name != path.name:
+                    new_path = path.parent / new_name
+                    try:
+                        path.rename(new_path)
+                        self.state.load_folder(path.parent, new_path)
+                        self._single_view.refresh_image()
+                        self._toolbar.update_single_mode()
+                    except Exception as e:
+                        print(f"Failed to rename: {e}")
+            d.close()
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _do_file_dialog(self, action):
+        path = self.state.current_file
+        if not path:
+            return
+
+        dialog = Gtk.FileChooserDialog()
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.set_action(Gtk.FileChooserAction.SELECT_FOLDER)
+        dialog.set_title("Move File" if action == "move" else "Copy File")
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OK, Gtk.ResponseType.OK,
+        )
+
+        def on_response(d, response_id):
+            if response_id == Gtk.ResponseType.OK:
+                dest_dir = d.get_file().get_path()
+                if action == "move":
+                    try:
+                        new_path = Path(dest_dir) / path.name
+                        path.rename(new_path)
+                        self.state.remove_file(path)
+                        self._single_view.refresh_image()
+                        self._toolbar.update_single_mode()
+                    except Exception as e:
+                        print(f"Failed to move file: {e}")
+                else:  # copy
+                    try:
+                        new_path = Path(dest_dir) / path.name
+                        shutil.copy2(str(path), str(new_path))
+                    except Exception as e:
+                        print(f"Failed to copy file: {e}")
+            d.close()
+
+        dialog.connect("response", on_response)
+        dialog.present()
 
     def _on_toolbar_action(self, toolbar, action):
         if action == "trash":
