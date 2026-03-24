@@ -22,16 +22,40 @@ class ImageViewerApp(Gtk.Application):
         self.win = None
 
     def do_activate(self):
-        """Launched with no file argument — grid view of last-used folder."""
+        """Launched with no file argument — grid view of last-used folder or folder picker."""
         if self.win is None:
             self.win = ImageViewerWindow(self, self.state)
 
         self.state.restore()
-        folder = self.state.last_folder or Path.home()
-        if folder.is_dir():
+        folder = self.state.last_folder
+
+        if folder and folder.is_dir():
             self.state.load_folder(folder)
-        self.win.show_grid()
+            if self.state.files:
+                self.win.show_grid()
+                self.win.present()
+                return
+
+        # No last folder or it was empty — ask user to pick one
         self.win.present()
+        self._show_folder_chooser()
+
+    def _show_folder_chooser(self):
+        """Open a folder chooser dialog."""
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Choose a folder to browse")
+
+        def on_response(dialog, result):
+            try:
+                folder = dialog.select_folder_finish(result)
+                path = Path(folder.get_path())
+                self.state.load_folder(path)
+                self.win.show_grid()
+            except Exception:
+                # User cancelled — show empty grid
+                self.win.show_grid()
+
+        dialog.select_folder(self.win, None, on_response)
 
     def do_shutdown(self):
         if self.state.current_folder:
