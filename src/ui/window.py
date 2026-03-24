@@ -7,6 +7,7 @@ from gi.repository import Gtk, Gdk
 
 from ..state.app_state import AppState
 from .theme import load_theme
+from .grid_view import GridView
 
 
 class ImageViewerWindow(Gtk.ApplicationWindow):
@@ -25,13 +26,15 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self._stack.set_transition_duration(150)
 
-        # Placeholder views (replaced by grid_view and single_view in later tasks)
-        self._grid_placeholder = Gtk.Label(label="Grid View")
-        self._grid_placeholder.add_css_class("empty-state")
+        # Grid view
+        self._grid_view = GridView(state)
+        self._grid_view.connect("image-activated", self._on_image_activated)
+
+        # Placeholder for single view (replaced in later task)
         self._single_placeholder = Gtk.Label(label="Single View")
         self._single_placeholder.add_css_class("empty-state")
 
-        self._stack.add_named(self._grid_placeholder, "grid")
+        self._stack.add_named(self._grid_view, "grid")
         self._stack.add_named(self._single_placeholder, "single")
 
         self._main_box.append(self._stack)
@@ -52,10 +55,15 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
     def show_grid(self):
         self.state.view_mode = "grid"
         self._stack.set_visible_child_name("grid")
+        self._grid_view.load()
 
     def show_single(self):
         self.state.view_mode = "single"
         self._stack.set_visible_child_name("single")
+
+    def _on_image_activated(self, grid_view, index):
+        self.state.index = index
+        self.show_single()
 
     def _setup_keybindings(self):
         controller = Gtk.EventControllerKey()
