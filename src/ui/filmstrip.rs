@@ -2,10 +2,11 @@ use gdk4 as gdk;
 use glib::subclass::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{self, gio, glib};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc;
 
 use crate::core::thumbnail::ThumbnailCache;
 use crate::state::app_state::AppState;
@@ -16,7 +17,6 @@ use crate::state::app_state::AppState;
 
 mod imp_item {
     use super::*;
-    use std::cell::Cell;
 
     #[derive(Default)]
     pub struct FilmstripItemInner {
@@ -76,6 +76,7 @@ pub struct Filmstrip {
     state: Rc<RefCell<AppState>>,
     on_select: Rc<RefCell<Option<Box<dyn Fn(u32)>>>>,
     bound_widgets: Rc<RefCell<HashMap<u32, gtk4::Picture>>>,
+    loading: Rc<Cell<bool>>, // suppress selection callback during load
 }
 
 impl Filmstrip {
@@ -87,31 +88,48 @@ impl Filmstrip {
 
         let factory = gtk4::SignalListItemFactory::new();
 
+        // Setup: create a Picture widget for each cell
         factory.connect_setup(|_factory, list_item| {
             let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let picture = gtk4::Picture::new();
             picture.set_content_fit(gtk4::ContentFit::Cover);
             picture.set_can_shrink(true);
             picture.set_size_request(64, 64);
-            picture.add_css_class("filmstrip-thumb");
+            picture.add_css_class("filmstrip-item");
             list_item.set_child(Some(&picture));
         });
 
-        let bound_widgets: Rc<RefCell<HashMap<u32, gtk4::Picture>>> = Rc::new(RefCell::new(HashMap::new()));
+        // Bind: populate from item data + track widget
+        let bound_widgets: Rc<RefCell<HashMap<u32, gtk4::Picture>>> =
+            Rc::new(RefCell::new(HashMap::new()));
 
         let bound_bind = bound_widgets.clone();
+        let state_bind = state.clone();
         factory.connect_bind(move |_factory, list_item| {
             let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
             let item = list_item.item().and_downcast::<FilmstripItem>().unwrap();
             let picture = list_item.child().and_downcast::<gtk4::Picture>().unwrap();
+
             if let Some(tex) = item.texture() {
                 picture.set_paintable(Some(&tex));
             } else {
                 picture.set_paintable(gdk::Paintable::NONE);
             }
+
+            // Highlight current image
+            let current_idx = state_bind.borrow().index as u32;
+            picture.remove_css_class("filmstrip-item");
+            picture.remove_css_class("filmstrip-current");
+            if item.index() == current_idx {
+                picture.add_css_class("filmstrip-current");
+            } else {
+                picture.add_css_class("filmstrip-item");
+            }
+
             bound_bind.borrow_mut().insert(item.index(), picture);
         });
 
+        // Unbind: stop tracking widget
         let bound_unbind = bound_widgets.clone();
         factory.connect_unbind(move |_factory, list_item| {
             let list_item = list_item.downcast_ref::<gtk4::ListItem>().unwrap();
@@ -127,17 +145,23 @@ impl Filmstrip {
         let scroll = gtk4::ScrolledWindow::new();
         scroll.set_child(Some(&list_view));
         scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
-        scroll.set_min_content_height(72);
-        scroll.set_max_content_height(72);
+        scroll.set_min_content_height(80);
+        scroll.set_max_content_height(80);
         scroll.set_vexpand(false);
-        // Ensure the scrolled window always takes 72px even if list is empty
-        scroll.set_size_request(-1, 72);
+        scroll.set_size_request(-1, 80);
 
-        let on_select: Rc<RefCell<Option<Box<dyn Fn(u32)>>>> = Rc::new(RefCell::new(None));
+        let on_select: Rc<RefCell<Option<Box<dyn Fn(u32)>>>> =
+            Rc::new(RefCell::new(None));
+        let loading = Rc::new(Cell::new(false));
 
-        // Connect selection changed
+        // Selection changed → navigate to clicked thumbnail
         let on_select_ref = on_select.clone();
+        let loading_ref = loading.clone();
         selection.connect_selection_changed(move |sel, _, _| {
+            // Suppress during load to prevent cascading navigations
+            if loading_ref.get() {
+                return;
+            }
             let idx = sel.selected();
             if idx != gtk4::INVALID_LIST_POSITION {
                 if let Some(ref cb) = *on_select_ref.borrow() {
@@ -154,6 +178,7 @@ impl Filmstrip {
             state,
             on_select,
             bound_widgets,
+            loading,
         }
     }
 
@@ -162,7 +187,10 @@ impl Filmstrip {
     }
 
     pub fn load(&self) {
+        // Suppress selection callbacks while populating
+        self.loading.set(true);
         self.store.remove_all();
+        self.bound_widgets.borrow_mut().clear();
 
         let paths: Vec<(String, u32)> = {
             let st = self.state.borrow();
@@ -177,29 +205,52 @@ impl Filmstrip {
             self.store.append(&FilmstripItem::new(path, *idx));
         }
 
-        // Async thumbnail loading
-        let bound = self.bound_widgets.clone();
+        self.loading.set(false);
 
-        for (i, (path_str, _idx)) in paths.iter().enumerate() {
-            let path = PathBuf::from(path_str);
-            let bound_clone = bound.clone();
-            let pos = i as u32;
+        // Start async thumbnail loading with a bounded worker pool
+        self.load_thumbnails(&paths);
+    }
 
-            let (tx, rx) = std::sync::mpsc::channel::<(Vec<u8>, u32, u32)>();
+    fn load_thumbnails(&self, paths: &[(String, u32)]) {
+        if paths.is_empty() {
+            return;
+        }
 
-            std::thread::spawn(move || {
-                let cache = ThumbnailCache::new(None);
+        // Send all paths to a single background thread that processes them sequentially
+        // This avoids spawning hundreds of threads
+        let (work_tx, work_rx) = mpsc::channel::<(u32, PathBuf)>();
+        let (result_tx, result_rx) = mpsc::channel::<(u32, Vec<u8>, u32, u32)>();
+
+        // Queue all work
+        for (path_str, idx) in paths {
+            let _ = work_tx.send((*idx, PathBuf::from(path_str)));
+        }
+        drop(work_tx); // Close sender so the thread knows when work is done
+
+        // Single background thread processes thumbnails
+        std::thread::spawn(move || {
+            let cache = ThumbnailCache::new(None);
+            while let Ok((idx, path)) = work_rx.recv() {
                 if let Some(thumb) = cache.get_thumbnail(&path) {
                     let rgba = thumb.to_rgba8();
                     let (w, h) = rgba.dimensions();
                     let raw = rgba.into_raw();
-                    let _ = tx.send((raw, w, h));
+                    let _ = result_tx.send((idx, raw, w, h));
                 }
-            });
+            }
+        });
 
-            glib::idle_add_local(move || {
-                match rx.try_recv() {
-                    Ok((raw, w, h)) => {
+        // Poll results on main thread
+        let bound = self.bound_widgets.clone();
+        let store = self.store.clone();
+
+        glib::idle_add_local(move || {
+            // Process all available results this frame
+            let mut got_any = false;
+            loop {
+                match result_rx.try_recv() {
+                    Ok((idx, raw, w, h)) => {
+                        got_any = true;
                         let bytes = glib::Bytes::from_owned(raw);
                         let texture = gdk::MemoryTexture::new(
                             w as i32,
@@ -208,27 +259,55 @@ impl Filmstrip {
                             &bytes,
                             (w * 4) as usize,
                         );
-                        // Directly update the bound widget if visible
-                        if let Some(picture) = bound_clone.borrow().get(&pos) {
-                            picture.set_paintable(Some(&texture));
+                        let tex_ref: gdk::Texture = texture.upcast();
+
+                        // Store texture on the item for future bind calls
+                        if let Some(obj) = store.item(idx) {
+                            if let Some(item) = obj.downcast_ref::<FilmstripItem>() {
+                                item.set_texture(tex_ref.clone());
+                            }
                         }
-                        glib::ControlFlow::Break
+
+                        // Update currently-bound widget directly
+                        if let Some(picture) = bound.borrow().get(&idx) {
+                            picture.set_paintable(Some(&tex_ref));
+                        }
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return glib::ControlFlow::Break;
+                    }
                 }
-            });
-        }
+            }
+
+            if got_any {
+                glib::ControlFlow::Continue
+            } else {
+                glib::ControlFlow::Continue // keep polling until thread disconnects
+            }
+        });
     }
 
     pub fn update_selection(&self, index: usize) {
+        self.loading.set(true);
         let pos = index as u32;
         if pos < self.store.n_items() {
             self.selection.set_selected(pos);
-            // Scroll to the selected item
             self.list_view
                 .scroll_to(pos, gtk4::ListScrollFlags::NONE, None);
+
+            // Update CSS classes on visible items
+            for (&idx, picture) in self.bound_widgets.borrow().iter() {
+                picture.remove_css_class("filmstrip-item");
+                picture.remove_css_class("filmstrip-current");
+                if idx == pos {
+                    picture.add_css_class("filmstrip-current");
+                } else {
+                    picture.add_css_class("filmstrip-item");
+                }
+            }
         }
+        self.loading.set(false);
     }
 
     pub fn widget(&self) -> &gtk4::ScrolledWindow {
