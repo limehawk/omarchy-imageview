@@ -9,6 +9,9 @@ from ..state.app_state import AppState
 from .theme import load_theme
 from .grid_view import GridView
 from .single_view import SingleView
+from .toolbar import Toolbar
+from .info_panel import InfoPanel
+from ..actions.file_ops import trash_file, rotate_image
 
 
 class ImageViewerWindow(Gtk.ApplicationWindow):
@@ -36,7 +39,18 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         self._stack.add_named(self._grid_view, "grid")
         self._stack.add_named(self._single_view, "single")
 
-        self._main_box.append(self._stack)
+        self._info_panel = InfoPanel()
+        self._info_panel.set_visible(False)
+
+        # Content area: stack + info panel side by side
+        self._content_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self._content_box.append(self._stack)
+        self._content_box.append(self._info_panel)
+
+        self._toolbar = Toolbar(state)
+        self._toolbar.connect("action", self._on_toolbar_action)
+        self._main_box.append(self._toolbar)
+        self._main_box.append(self._content_box)
         self.set_child(self._main_box)
 
         self._setup_keybindings()
@@ -55,11 +69,13 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
         self.state.view_mode = "grid"
         self._stack.set_visible_child_name("grid")
         self._grid_view.load()
+        self._toolbar.update_grid_mode()
 
     def show_single(self):
         self.state.view_mode = "single"
         self._stack.set_visible_child_name("single")
         self._single_view.load()
+        self._toolbar.update_single_mode()
 
     def _on_image_activated(self, grid_view, index):
         self.state.index = index
@@ -95,27 +111,89 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
             if self.is_fullscreen():
                 self.unfullscreen()
                 self._single_view.set_filmstrip_visible(True)
+                self._toolbar.set_visible(True)
             else:
                 self.fullscreen()
                 self._single_view.set_filmstrip_visible(False)
+                self._toolbar.set_visible(False)
+            return True
+
+        # File operations (single view)
+        if self.state.view_mode == "single":
+            if key == "Delete":
+                self._do_trash()
+                return True
+            if ctrl and key == "r":
+                if shift:
+                    self._do_rotate(270)
+                else:
+                    self._do_rotate(90)
+                return True
+            if ctrl and shift and key == "X":
+                self._do_trash()
+                return True
+
+        if ctrl and key == "i":
+            visible = not self._info_panel.get_visible()
+            self._info_panel.set_visible(visible)
+            if visible:
+                self._info_panel.update(self.state.current_file)
             return True
 
         if self.state.view_mode == "single":
             if key in ("Left", "Up"):
                 self.state.navigate_prev()
                 self._single_view.refresh_image()
+                self._toolbar.update_single_mode()
+                if self._info_panel.get_visible():
+                    self._info_panel.update(self.state.current_file)
                 return True
             if key in ("Right", "Down"):
                 self.state.navigate_next()
                 self._single_view.refresh_image()
+                self._toolbar.update_single_mode()
+                if self._info_panel.get_visible():
+                    self._info_panel.update(self.state.current_file)
                 return True
             if key == "Home":
                 self.state.navigate_to(0)
                 self._single_view.refresh_image()
+                self._toolbar.update_single_mode()
+                if self._info_panel.get_visible():
+                    self._info_panel.update(self.state.current_file)
                 return True
             if key == "End":
                 self.state.navigate_to(len(self.state.files) - 1)
                 self._single_view.refresh_image()
+                self._toolbar.update_single_mode()
+                if self._info_panel.get_visible():
+                    self._info_panel.update(self.state.current_file)
                 return True
 
         return False
+
+    def _do_trash(self):
+        path = self.state.current_file
+        if path and trash_file(path):
+            self.state.remove_file(path)
+            self._single_view.refresh_image()
+            self._toolbar.update_single_mode()
+
+    def _do_rotate(self, degrees):
+        path = self.state.current_file
+        if path:
+            rotate_image(path, degrees)
+            self._single_view.refresh_image()
+
+    def _on_toolbar_action(self, toolbar, action):
+        if action == "trash":
+            self._do_trash()
+        elif action == "rotate":
+            self._do_rotate(90)
+        elif action == "info":
+            visible = not self._info_panel.get_visible()
+            self._info_panel.set_visible(visible)
+            if visible:
+                self._info_panel.update(self.state.current_file)
+        elif action == "copy":
+            pass  # Clipboard wired in Batch 7
