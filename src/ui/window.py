@@ -12,6 +12,7 @@ from .single_view import SingleView
 from .toolbar import Toolbar
 from .info_panel import InfoPanel
 from ..actions.file_ops import trash_file, rotate_image
+from ..actions.clipboard import copy_texture_to_clipboard, copy_text_to_clipboard
 
 
 class ImageViewerWindow(Gtk.ApplicationWindow):
@@ -132,6 +133,16 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
             if ctrl and shift and key == "X":
                 self._do_trash()
                 return True
+            if ctrl and key == "c":
+                if shift:
+                    path = self.state.current_file
+                    if path:
+                        copy_text_to_clipboard(str(path))
+                else:
+                    texture = self._single_view.current_texture
+                    if texture:
+                        copy_texture_to_clipboard(texture)
+                return True
 
         if ctrl and key == "i":
             visible = not self._info_panel.get_visible()
@@ -196,4 +207,6 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
             if visible:
                 self._info_panel.update(self.state.current_file)
         elif action == "copy":
-            pass  # Clipboard wired in Batch 7
+            texture = self._single_view.current_texture
+            if texture:
+                copy_texture_to_clipboard(texture)
