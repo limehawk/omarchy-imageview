@@ -57,6 +57,7 @@ class GridView(Gtk.Box):
         self._cache = ThumbnailCache()
         self._pool = ThreadPoolExecutor(max_workers=4)
         self._items = {}
+        self._bound_widgets = {}  # item id → Gtk.Picture (for live thumbnail updates)
 
         self._store = Gio.ListStore(item_type=ImageItem)
         self._selection = Gtk.SingleSelection(model=self._store)
@@ -105,10 +106,10 @@ class GridView(Gtk.Box):
     def _apply_thumbnail(self, item: ImageItem, thumb):
         try:
             item.texture = image_to_texture(thumb)
-            for i in range(self._store.get_n_items()):
-                if self._store.get_item(i) is item:
-                    self._store.items_changed(i, 1, 1)
-                    break
+            # Directly update the bound widget if it's currently visible
+            picture = self._bound_widgets.get(id(item))
+            if picture is not None:
+                picture.set_paintable(item.texture)
         except Exception:
             pass
         return False
@@ -141,11 +142,15 @@ class GridView(Gtk.Box):
         label.set_text(item.filename)
         if item.texture:
             picture.set_paintable(item.texture)
+        # Track which widget is bound to this item so async thumbnails can update it
+        self._bound_widgets[id(item)] = picture
 
     def _on_unbind(self, factory, list_item):
         box = list_item.get_child()
+        item = list_item.get_item()
         picture = box.get_first_child()
         picture.set_paintable(None)
+        self._bound_widgets.pop(id(item), None)
 
     def _on_activate(self, grid_view, position):
         self.state.index = position

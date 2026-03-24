@@ -51,6 +51,7 @@ class Filmstrip(Gtk.Box):
         self.state = state
         self._cache = ThumbnailCache()
         self._pool = ThreadPoolExecutor(max_workers=2)
+        self._bound_widgets = {}  # item id → Gtk.Picture
 
         self._store = Gio.ListStore(item_type=FilmstripItem)
         self._selection = Gtk.SingleSelection(model=self._store)
@@ -108,10 +109,9 @@ class Filmstrip(Gtk.Box):
     def _apply_thumbnail(self, item, thumb):
         try:
             item.texture = image_to_texture(thumb)
-            for i in range(self._store.get_n_items()):
-                if self._store.get_item(i) is item:
-                    self._store.items_changed(i, 1, 1)
-                    break
+            picture = self._bound_widgets.get(id(item))
+            if picture is not None:
+                picture.set_paintable(item.texture)
         except Exception:
             pass
         return False
@@ -135,10 +135,13 @@ class Filmstrip(Gtk.Box):
         else:
             picture.remove_css_class("filmstrip-current")
             picture.add_css_class("filmstrip-item")
+        self._bound_widgets[id(item)] = picture
 
     def _on_unbind(self, factory, list_item):
+        item = list_item.get_item()
         picture = list_item.get_child()
         picture.set_paintable(None)
+        self._bound_widgets.pop(id(item), None)
 
     def _on_activate(self, list_view, position):
         self.state.index = position
