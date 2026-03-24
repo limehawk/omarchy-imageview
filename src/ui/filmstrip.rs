@@ -254,17 +254,18 @@ impl Filmstrip {
             }
         });
 
-        // Poll results on main thread
+        // Poll results on main thread every 32ms (not idle — idle can starve on initial render)
         let bound = self.bound_widgets.clone();
         let store = self.store.clone();
+        let list_view = self.list_view.clone();
 
-        glib::idle_add_local(move || {
-            // Process all available results this frame
-            let mut got_any = false;
+        glib::timeout_add_local(std::time::Duration::from_millis(32), move || {
+            let mut updated = false;
+            // Drain all available results
             loop {
                 match result_rx.try_recv() {
                     Ok((idx, raw, w, h)) => {
-                        got_any = true;
+                        updated = true;
                         let bytes = glib::Bytes::from_owned(raw);
                         let texture = gdk::MemoryTexture::new(
                             w as i32,
@@ -285,20 +286,21 @@ impl Filmstrip {
                         // Update currently-bound widget directly
                         if let Some(picture) = bound.borrow().get(&idx) {
                             picture.set_paintable(Some(&tex_ref));
+                            picture.queue_draw();
                         }
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
+                        // Force final repaint
+                        list_view.queue_draw();
                         return glib::ControlFlow::Break;
                     }
                 }
             }
-
-            if got_any {
-                glib::ControlFlow::Continue
-            } else {
-                glib::ControlFlow::Continue // keep polling until thread disconnects
+            if updated {
+                list_view.queue_draw();
             }
+            glib::ControlFlow::Continue
         });
     }
 
