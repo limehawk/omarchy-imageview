@@ -221,11 +221,25 @@ impl Filmstrip {
         let (work_tx, work_rx) = mpsc::channel::<(u32, PathBuf)>();
         let (result_tx, result_rx) = mpsc::channel::<(u32, Vec<u8>, u32, u32)>();
 
-        // Queue all work
-        for (path_str, idx) in paths {
-            let _ = work_tx.send((*idx, PathBuf::from(path_str)));
+        // Queue work starting from current index, spiraling outward
+        // so visible filmstrip thumbnails load first
+        let current = self.state.borrow().index;
+        let len = paths.len();
+        let mut order: Vec<usize> = Vec::with_capacity(len);
+        order.push(current.min(len.saturating_sub(1)));
+        for offset in 1..len {
+            if current + offset < len {
+                order.push(current + offset);
+            }
+            if offset <= current {
+                order.push(current - offset);
+            }
         }
-        drop(work_tx); // Close sender so the thread knows when work is done
+        for i in order {
+            let (ref path_str, idx) = paths[i];
+            let _ = work_tx.send((idx, PathBuf::from(path_str)));
+        }
+        drop(work_tx);
 
         // Single background thread processes thumbnails
         std::thread::spawn(move || {
