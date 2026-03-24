@@ -13,6 +13,7 @@ from .toolbar import Toolbar
 from .info_panel import InfoPanel
 from ..actions.file_ops import trash_file, rotate_image
 from ..actions.clipboard import copy_texture_to_clipboard, copy_text_to_clipboard
+from ..actions.wallpaper import set_wallpaper
 
 
 class ImageViewerWindow(Gtk.ApplicationWindow):
@@ -142,6 +143,11 @@ class ImageViewerWindow(Gtk.ApplicationWindow):
                     texture = self._single_view.current_texture
                     if texture:
                         copy_texture_to_clipboard(texture)
+                return True
+            if ctrl and key == "w":
+                path = self.state.current_file
+                if path:
+                    set_wallpaper(path)
                 return True
 
         if ctrl and key == "i":
