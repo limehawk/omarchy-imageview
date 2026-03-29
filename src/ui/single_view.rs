@@ -53,6 +53,9 @@ impl SingleView {
         // --- Double-click for zoom toggle ---
         Self::setup_click_controller(&view);
 
+        // --- Middle-click for zoom toggle ---
+        Self::setup_middle_click_controller(&view);
+
         // --- Filmstrip selection callback ---
         Self::setup_filmstrip_callback(&view);
 
@@ -106,6 +109,22 @@ impl SingleView {
                 } else {
                     v.zoom_to_fit();
                 }
+            }
+        });
+        view.borrow().picture.add_controller(click);
+    }
+
+    fn setup_middle_click_controller(view: &Rc<RefCell<Self>>) {
+        let click = gtk4::GestureClick::new();
+        click.set_button(2); // middle button
+        let view_ref = view.clone();
+        click.connect_released(move |_gesture, _n_press, _x, _y| {
+            let v = view_ref.borrow();
+            let is_fit = v.state.borrow().zoom_fit;
+            if is_fit {
+                v.zoom_to_actual();
+            } else {
+                v.zoom_to_fit();
             }
         });
         view.borrow().picture.add_controller(click);
