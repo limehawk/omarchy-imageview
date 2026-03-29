@@ -164,6 +164,10 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
+                "q" if !ctrl => {
+                    window_ref.close();
+                    glib::Propagation::Stop
+                }
                 "BackSpace" if is_single => {
                     single_ref.borrow().navigate_prev();
                     let v = viewer_ref.borrow();
@@ -284,6 +288,10 @@ impl ImageViewerWindow {
                 }
                 "minus" if is_single && !ctrl => {
                     single_ref.borrow().zoom_out();
+                    glib::Propagation::Stop
+                }
+                "1" if is_single && !ctrl => {
+                    single_ref.borrow().zoom_to_actual();
                     glib::Propagation::Stop
                 }
                 // Delete -> trash current file
