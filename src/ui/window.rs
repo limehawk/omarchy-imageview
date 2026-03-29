@@ -164,9 +164,13 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
-                "BackSpace" => {
-                    if is_single {
-                        viewer_ref.borrow().show_grid();
+                "BackSpace" if is_single => {
+                    single_ref.borrow().navigate_prev();
+                    let v = viewer_ref.borrow();
+                    v.toolbar.update_single_mode();
+                    if v.info_panel.container.is_visible() {
+                        let path = v.state.borrow().current_file().map(|p| p.to_path_buf());
+                        v.info_panel.update(path.as_deref());
                     }
                     glib::Propagation::Stop
                 }
@@ -218,6 +222,16 @@ impl ImageViewerWindow {
                 }
                 "Left" | "Up" if is_single && !ctrl => {
                     single_ref.borrow().navigate_prev();
+                    let v = viewer_ref.borrow();
+                    v.toolbar.update_single_mode();
+                    if v.info_panel.container.is_visible() {
+                        let path = v.state.borrow().current_file().map(|p| p.to_path_buf());
+                        v.info_panel.update(path.as_deref());
+                    }
+                    glib::Propagation::Stop
+                }
+                "space" if is_single => {
+                    single_ref.borrow().navigate_next();
                     let v = viewer_ref.borrow();
                     v.toolbar.update_single_mode();
                     if v.info_panel.container.is_visible() {
