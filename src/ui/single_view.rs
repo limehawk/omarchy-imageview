@@ -9,6 +9,7 @@ use crate::state::app_state::AppState;
 
 pub struct SingleView {
     pub container: gtk4::Box,
+    scrolled_window: gtk4::ScrolledWindow,
     picture: gtk4::Picture,
     filmstrip: Rc<Filmstrip>,
     state: Rc<RefCell<AppState>>,
@@ -22,19 +23,24 @@ impl SingleView {
         let picture = gtk4::Picture::new();
         picture.set_content_fit(gtk4::ContentFit::Contain);
         picture.set_can_shrink(true);
-        picture.set_vexpand(true);
-        picture.set_hexpand(true);
         picture.add_css_class("single-image");
+
+        let scrolled_window = gtk4::ScrolledWindow::new();
+        scrolled_window.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+        scrolled_window.set_vexpand(true);
+        scrolled_window.set_hexpand(true);
+        scrolled_window.set_child(Some(&picture));
 
         let filmstrip = Rc::new(Filmstrip::new(state.clone()));
 
-        container.append(&picture);
+        container.append(&scrolled_window);
         container.append(filmstrip.widget());
 
         let current_texture: Rc<RefCell<Option<gdk::Texture>>> = Rc::new(RefCell::new(None));
 
         let view = Rc::new(RefCell::new(Self {
             container,
+            scrolled_window,
             picture,
             filmstrip,
             state,
@@ -84,7 +90,7 @@ impl SingleView {
             view_ref.borrow().refresh_image();
             glib::Propagation::Stop
         });
-        view.borrow().container.add_controller(scroll_ctrl);
+        view.borrow().scrolled_window.add_controller(scroll_ctrl);
     }
 
     fn setup_click_controller(view: &Rc<RefCell<Self>>) {
@@ -186,10 +192,10 @@ impl SingleView {
                         &bytes,
                         (w * 4) as usize,
                     );
-                    // Always reset to fit mode on image load
-                    picture.set_size_request(-1, -1);
-                    picture.set_content_fit(gtk4::ContentFit::Contain);
+                    // Show at natural size (100%), no upscaling
+                    picture.set_content_fit(gtk4::ContentFit::ScaleDown);
                     picture.set_can_shrink(true);
+                    picture.set_size_request(-1, -1);
                     picture.set_paintable(Some(&texture));
                     *current_texture.borrow_mut() = Some(texture.upcast());
                     glib::ControlFlow::Break
