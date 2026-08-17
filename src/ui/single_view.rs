@@ -1,12 +1,12 @@
 use gdk4 as gdk;
-use gdk4::prelude::TextureExt;
+use gdk4::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{self, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::filmstrip::Filmstrip;
-use crate::state::app_state::AppState;
+use crate::state::app_state::{AppState, ScaleMode};
 
 pub struct SingleView {
     pub container: gtk4::Box,
@@ -17,6 +17,8 @@ pub struct SingleView {
     current_texture: Rc<RefCell<Option<gdk::Texture>>>,
     /// Bumped on every load to invalidate any in-flight animation timers.
     load_epoch: Rc<std::cell::Cell<u64>>,
+    anim_playing: Rc<std::cell::Cell<bool>>,
+    is_animated: Rc<std::cell::Cell<bool>>,
     on_navigate: Rc<RefCell<Option<Box<dyn Fn()>>>>,
 }
 
@@ -51,6 +53,8 @@ impl SingleView {
             state,
             current_texture,
             load_epoch,
+            anim_playing: Rc::new(std::cell::Cell::new(true)),
+            is_animated: Rc::new(std::cell::Cell::new(false)),
             on_navigate: Rc::new(RefCell::new(None)),
         }));
 
@@ -178,6 +182,8 @@ impl SingleView {
         // observes this and stops itself.
         let epoch = self.load_epoch.get().wrapping_add(1);
         self.load_epoch.set(epoch);
+        self.anim_playing.set(true);
+        self.is_animated.set(false);
 
         let path = {
             let state = self.state.borrow();
@@ -205,6 +211,7 @@ impl SingleView {
             if let Some(tex) = crate::core::texture::svg_to_texture(&path) {
                 self.picture.set_paintable(Some(&tex));
                 *self.current_texture.borrow_mut() = Some(tex);
+                self.apply_display();
             }
             return;
         }
@@ -222,6 +229,7 @@ impl SingleView {
         let picture = self.picture.clone();
         let current_texture = self.current_texture.clone();
         let load_epoch = self.load_epoch.clone();
+        let state = self.state.clone();
 
         let (tx, rx) = std::sync::mpsc::channel::<(Vec<u8>, u32, u32)>();
 
@@ -254,12 +262,9 @@ impl SingleView {
                         &bytes,
                         (w * 4) as usize,
                     );
-                    // Show at natural size (100%), no upscaling
-                    picture.set_content_fit(gtk4::ContentFit::ScaleDown);
-                    picture.set_can_shrink(true);
-                    picture.set_size_request(-1, -1);
                     picture.set_paintable(Some(&texture));
                     *current_texture.borrow_mut() = Some(texture.upcast());
+                    apply_picture_scale(&picture, &state.borrow());
                     glib::ControlFlow::Break
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
@@ -275,6 +280,9 @@ impl SingleView {
         let picture = self.picture.clone();
         let current_texture = self.current_texture.clone();
         let load_epoch = self.load_epoch.clone();
+        let state = self.state.clone();
+        let is_animated = self.is_animated.clone();
+        let anim_playing = self.anim_playing.clone();
 
         enum Decoded {
             Animated(Vec<crate::core::image_loader::AnimatedFrame>),
@@ -317,11 +325,9 @@ impl SingleView {
                             &bytes,
                             (w * 4) as usize,
                         );
-                        picture.set_content_fit(gtk4::ContentFit::ScaleDown);
-                        picture.set_can_shrink(true);
-                        picture.set_size_request(-1, -1);
                         picture.set_paintable(Some(&texture));
                         *current_texture.borrow_mut() = Some(texture.upcast());
+                        apply_picture_scale(&picture, &state.borrow());
                     }
                     Decoded::Animated(frames) => {
                         if frames.is_empty() {
@@ -342,13 +348,13 @@ impl SingleView {
                             })
                             .collect();
 
-                        picture.set_content_fit(gtk4::ContentFit::ScaleDown);
-                        picture.set_can_shrink(true);
-                        picture.set_size_request(-1, -1);
                         picture.set_paintable(Some(&textures[0].0));
                         *current_texture.borrow_mut() = Some(textures[0].0.clone().upcast());
+                        apply_picture_scale(&picture, &state.borrow());
 
                         if textures.len() > 1 {
+                            is_animated.set(true);
+                            anim_playing.set(true);
                             let textures = Rc::new(textures);
                             let frame_idx = Rc::new(std::cell::Cell::new(0usize));
                             schedule_next_gif_frame(
@@ -358,6 +364,7 @@ impl SingleView {
                                 frame_idx,
                                 load_epoch.clone(),
                                 epoch,
+                                anim_playing.clone(),
                             );
                         }
                     }
@@ -391,18 +398,91 @@ impl SingleView {
         let mut st = self.state.borrow_mut();
         st.zoom_fit = true;
         st.zoom = 1.0;
+        st.scale_mode = ScaleMode::Fit;
         drop(st);
-        self.picture.set_content_fit(gtk4::ContentFit::Contain);
-        self.picture.set_can_shrink(true);
-        self.picture.set_size_request(-1, -1);
+        self.apply_display();
     }
 
     pub fn zoom_to_actual(&self) {
         let mut st = self.state.borrow_mut();
         st.zoom_fit = false;
         st.zoom = 1.0;
+        st.scale_mode = ScaleMode::Actual;
         drop(st);
-        self.apply_zoom(1.0);
+        self.apply_display();
+    }
+
+    pub fn cycle_scale_mode(&self) {
+        self.state.borrow_mut().cycle_scale_mode();
+        self.apply_display();
+    }
+
+    pub fn apply_display(&self) {
+        apply_picture_scale(&self.picture, &self.state.borrow());
+        if !self.state.borrow().zoom_fit && self.state.borrow().zoom != 1.0 {
+            let z = self.state.borrow().zoom;
+            self.apply_zoom(z);
+        }
+    }
+
+    /// Space: pause/play an animation, otherwise next image. Returns true if
+    /// the key was consumed as a pause toggle.
+    pub fn handle_space(&self) -> bool {
+        if self.is_animated.get() {
+            self.anim_playing.set(!self.anim_playing.get());
+            return true;
+        }
+        false
+    }
+
+    pub fn toggle_nearest(&self) {
+        let on = {
+            let mut st = self.state.borrow_mut();
+            st.nearest_neighbor = !st.nearest_neighbor;
+            st.nearest_neighbor
+        };
+        if on {
+            self.picture.add_css_class("nearest");
+        } else {
+            self.picture.remove_css_class("nearest");
+        }
+    }
+
+    pub fn flip_displayed(&self, horizontal: bool) {
+        let tex = match self.current_texture.borrow().as_ref() {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let w = tex.width();
+        let h = tex.height();
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let stride = w as usize * 4;
+        let mut buf = vec![0u8; stride * h as usize];
+        tex.download(&mut buf, stride);
+        let Some(rgba) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else {
+            return;
+        };
+        let img = image::DynamicImage::ImageRgba8(rgba);
+        let flipped = if horizontal { img.fliph() } else { img.flipv() };
+        let out = flipped.to_rgba8();
+        let (nw, nh) = out.dimensions();
+        let texture = gdk::MemoryTexture::new(
+            nw as i32,
+            nh as i32,
+            gdk::MemoryFormat::R8g8b8a8,
+            &glib::Bytes::from_owned(out.into_raw()),
+            (nw * 4) as usize,
+        );
+        self.picture.set_paintable(Some(&texture));
+        *self.current_texture.borrow_mut() = Some(texture.upcast());
+        self.apply_display();
+        if horizontal {
+            self.state.borrow_mut().toggle_flip_h();
+        } else {
+            self.state.borrow_mut().toggle_flip_v();
+        }
     }
 
     fn apply_zoom(&self, factor: f64) {
@@ -465,34 +545,38 @@ impl SingleView {
             (st.zoom_fit, st.zoom)
         };
         if zoom_fit {
-            self.picture.set_content_fit(gtk4::ContentFit::Contain);
-            self.picture.set_can_shrink(true);
-            self.picture.set_size_request(-1, -1);
+            self.apply_display();
         } else {
             self.apply_zoom(zoom);
         }
         self.state.borrow_mut().add_rotation(degrees);
     }
 
-    /// Write the pending display rotation to the current file.
+    /// Write pending rotation and flips to the current file.
     pub fn save_rotation(&self) -> bool {
-        let (path, degrees) = {
+        let (path, degrees, flip_h, flip_v) = {
             let st = self.state.borrow();
             (
                 st.current_file().map(|p| p.to_path_buf()),
                 st.pending_rotation,
+                st.pending_flip_h,
+                st.pending_flip_v,
             )
         };
         let Some(path) = path else {
             return false;
         };
-        if degrees == 0 {
+        if degrees == 0 && !flip_h && !flip_v {
             return true;
         }
-        if !crate::actions::file_ops::save_rotation(&path, degrees) {
+        if !crate::actions::file_ops::save_transform(&path, degrees, flip_h, flip_v) {
             return false;
         }
-        self.state.borrow_mut().pending_rotation = 0;
+        let mut st = self.state.borrow_mut();
+        st.pending_rotation = 0;
+        st.pending_flip_h = false;
+        st.pending_flip_v = false;
+        drop(st);
         self.filmstrip.load();
         true
     }
@@ -526,17 +610,53 @@ fn schedule_next_gif_frame(
     frame_idx: Rc<std::cell::Cell<usize>>,
     load_epoch: Rc<std::cell::Cell<u64>>,
     my_epoch: u64,
+    playing: Rc<std::cell::Cell<bool>>,
 ) {
-    let delay = textures[frame_idx.get()].1;
+    let delay = textures[frame_idx.get()].1.max(20);
     glib::timeout_add_local_once(std::time::Duration::from_millis(delay as u64), move || {
         if load_epoch.get() != my_epoch {
             return;
         }
-        let next = (frame_idx.get() + 1) % textures.len();
-        frame_idx.set(next);
-        let tex = &textures[next].0;
-        picture.set_paintable(Some(tex));
-        *current_texture.borrow_mut() = Some(tex.clone().upcast());
-        schedule_next_gif_frame(picture, current_texture, textures, frame_idx, load_epoch, my_epoch);
+        if playing.get() {
+            let next = (frame_idx.get() + 1) % textures.len();
+            frame_idx.set(next);
+            let tex = &textures[next].0;
+            picture.set_paintable(Some(tex));
+            *current_texture.borrow_mut() = Some(tex.clone().upcast());
+        }
+        schedule_next_gif_frame(
+            picture,
+            current_texture,
+            textures,
+            frame_idx,
+            load_epoch,
+            my_epoch,
+            playing,
+        );
     });
+}
+
+fn apply_picture_scale(picture: &gtk4::Picture, st: &AppState) {
+    if !st.zoom_fit && st.zoom != 1.0 {
+        return;
+    }
+    match st.scale_mode {
+        ScaleMode::Fit => {
+            picture.set_content_fit(gtk4::ContentFit::Contain);
+            picture.set_can_shrink(true);
+            picture.set_size_request(-1, -1);
+        }
+        ScaleMode::Fill => {
+            picture.set_content_fit(gtk4::ContentFit::Cover);
+            picture.set_can_shrink(true);
+            picture.set_size_request(-1, -1);
+        }
+        ScaleMode::Actual => {
+            picture.set_content_fit(gtk4::ContentFit::Fill);
+            picture.set_can_shrink(false);
+            if let Some(tex) = picture.paintable() {
+                picture.set_size_request(tex.intrinsic_width(), tex.intrinsic_height());
+            }
+        }
+    }
 }

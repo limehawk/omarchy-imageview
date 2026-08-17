@@ -1,5 +1,5 @@
 use image::{DynamicImage, Rgba, RgbaImage};
-use omarchy_imageview::actions::file_ops::save_rotation;
+use omarchy_imageview::actions::file_ops::{editor_commands, save_rotation};
 use omarchy_imageview::core::image_loader::{
     compose_orientation_cw, load_image, read_exif_orientation,
 };
@@ -69,4 +69,10 @@ fn save_zero_degrees_is_noop() {
     assert!(save_rotation(&path, 0));
     let loaded = load_image(&path).unwrap();
     assert_eq!(loaded.width(), 2);
+}
+
+#[test]
+fn editor_prefers_tensaku() {
+    assert_eq!(editor_commands()[0], "tensaku-edit");
+    assert_eq!(*editor_commands().last().unwrap(), "pinta");
 }

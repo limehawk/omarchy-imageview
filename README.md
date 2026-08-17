@@ -44,20 +44,29 @@ Grid for the folder. Single view for one image, with a filmstrip along the botto
 |-----|--------|
 | click | Open from grid |
 | Esc / g | Back to grid |
-| ← → · Space · Backspace | Previous / next |
+| ← → · Space · Backspace | Previous / next (wraps). Space pauses GIFs |
 | Home / End | First / last |
-| + − · 0 · 1 | Zoom in / out / fit / actual size |
+| s | Cycle Fit / Fill / 1:1 |
+| + − · 0 · 1 · r | Zoom in / out / fit / actual / reset |
 | middle-click · double-click | Toggle fit / actual size |
 | drag | Pan when zoomed |
+| t / T | Slideshow on (+1s) / slower (off at 0) |
+| h / v | Flip horizontal / vertical |
+| u | Nearest-neighbor hint (pixel art) |
+| Sort icon | Date or name |
+| Filmstrip button | Show or hide the strip (remembered) |
 | Ctrl+R / Ctrl+Shift+R | Rotate 90° / 270° (display only) |
-| Ctrl+S | Write the rotation to the file |
+| Ctrl+S | Write rotation and flips to the file |
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy path |
 | Ctrl+W | Set as wallpaper |
-| Ctrl+E | Open in Pinta |
+| Ctrl+E | Open in Tensaku, or Pinta |
+| Ctrl+P | Print (`lp`) |
 | Ctrl+I | EXIF / info panel |
 | F2 | Rename |
 | Ctrl+M / Ctrl+Shift+M | Move / copy to a folder |
-| Delete | Trash |
+| Delete | Trash (multi-select in the grid) |
+| Ctrl+Shift+X | Trash and stay on the next image |
+| Ctrl+X | Trash and quit |
 | F11 / f | Fullscreen |
 | q | Quit |
 

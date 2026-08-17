@@ -81,6 +81,48 @@ pub fn compose_orientation_cw(orientation: u32, degrees: u32) -> u32 {
     tag
 }
 
+/// Mirror across the vertical axis (left-right).
+pub fn compose_flip_h(orientation: u32) -> u32 {
+    match if (1..=8).contains(&orientation) { orientation } else { 1 } {
+        1 => 2,
+        2 => 1,
+        3 => 4,
+        4 => 3,
+        5 => 6,
+        6 => 5,
+        7 => 8,
+        8 => 7,
+        _ => 2,
+    }
+}
+
+/// Mirror across the horizontal axis (up-down).
+pub fn compose_flip_v(orientation: u32) -> u32 {
+    match if (1..=8).contains(&orientation) { orientation } else { 1 } {
+        1 => 4,
+        2 => 3,
+        3 => 2,
+        4 => 1,
+        5 => 8,
+        6 => 7,
+        7 => 6,
+        8 => 5,
+        _ => 4,
+    }
+}
+
+/// Rotation then optional flips, composed onto an existing EXIF tag.
+pub fn compose_transform(orientation: u32, degrees: u32, flip_h: bool, flip_v: bool) -> u32 {
+    let mut tag = compose_orientation_cw(orientation, degrees);
+    if flip_h {
+        tag = compose_flip_h(tag);
+    }
+    if flip_v {
+        tag = compose_flip_v(tag);
+    }
+    tag
+}
+
 pub fn rotate_degrees(img: DynamicImage, degrees: u32) -> DynamicImage {
     match degrees % 360 {
         90 => img.rotate90(),

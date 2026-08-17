@@ -38,6 +38,21 @@ pub fn parse_colors(path: Option<&std::path::Path>) -> HashMap<String, String> {
     colors
 }
 
+pub fn hex_rgba(hex: &str) -> [u8; 4] {
+    let h = hex.trim().trim_start_matches('#');
+    let parse = |i| u8::from_str_radix(h.get(i..i + 2).unwrap_or("00"), 16).unwrap_or(0);
+    if h.len() >= 6 {
+        [parse(0), parse(2), parse(4), 255]
+    } else {
+        [0xCE, 0xCD, 0xC3, 255]
+    }
+}
+
+pub fn foreground_rgba() -> [u8; 4] {
+    let colors = parse_colors(None);
+    hex_rgba(colors.get("foreground").map(|s| s.as_str()).unwrap_or(FALLBACK_FG))
+}
+
 pub fn generate_css(colors: &HashMap<String, String>) -> String {
     let bg = colors.get("background").map(|s| s.as_str()).unwrap_or(FALLBACK_BG);
     let fg = colors.get("foreground").map(|s| s.as_str()).unwrap_or(FALLBACK_FG);
@@ -52,9 +67,31 @@ pub fn generate_css(colors: &HashMap<String, String>) -> String {
     }}
 
     .toolbar {{
-        background-color: {surface};
-        border-bottom: 1px solid {sel_bg};
-        padding: 4px 12px;
+        background-color: {bg};
+        border-bottom: 1px solid alpha({fg}, 0.08);
+        padding: 8px 14px;
+        min-height: 0;
+    }}
+
+    .toolbar-copy {{
+        margin-right: 16px;
+    }}
+
+    .toolbar-identity {{
+        color: {fg};
+        font-weight: 500;
+        font-size: 0.95em;
+        letter-spacing: -0.01em;
+    }}
+
+    .toolbar-meta {{
+        color: alpha({fg}, 0.45);
+        font-size: 0.75em;
+        letter-spacing: 0.02em;
+    }}
+
+    .toolbar-tools {{
+        margin-left: 4px;
     }}
 
     .grid-item {{
@@ -107,16 +144,6 @@ pub fn generate_css(colors: &HashMap<String, String>) -> String {
         font-size: 0.9em;
     }}
 
-    .accent-text {{
-        color: {accent};
-    }}
-
-    menubutton.sort-btn,
-    menubutton.sort-btn > button {{
-        min-width: 0;
-        padding: 2px 6px;
-    }}
-
     .sort-menu checkbutton {{
         padding: 4px 10px;
     }}
@@ -124,6 +151,58 @@ pub fn generate_css(colors: &HashMap<String, String>) -> String {
     .empty-state {{
         color: alpha({fg}, 0.4);
         font-size: 1.2em;
+    }}
+
+    .single-image.nearest {{
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+    }}
+
+    button.pixel-btn,
+    menubutton.pixel-btn > button {{
+        min-width: 32px;
+        min-height: 32px;
+        padding: 4px;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        background-image: none;
+        box-shadow: none;
+        outline: none;
+        color: {fg};
+    }}
+
+    menubutton.pixel-btn {{
+        min-width: 32px;
+        min-height: 32px;
+        padding: 0;
+        border: none;
+        background: transparent;
+        box-shadow: none;
+    }}
+
+    button.pixel-btn:hover,
+    menubutton.pixel-btn > button:hover {{
+        background: alpha({fg}, 0.08);
+        background-image: none;
+        box-shadow: none;
+    }}
+
+    button.pixel-btn:active,
+    menubutton.pixel-btn > button:active,
+    menubutton.pixel-btn > button:checked {{
+        background: alpha({fg}, 0.12);
+        background-image: none;
+        box-shadow: none;
+    }}
+
+    button.pixel-btn:focus,
+    button.pixel-btn:focus-visible,
+    menubutton.pixel-btn > button:focus,
+    menubutton.pixel-btn > button:focus-visible {{
+        outline: 1px solid {accent};
+        outline-offset: 0;
+        box-shadow: none;
     }}
     "#)
 }

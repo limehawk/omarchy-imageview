@@ -1,6 +1,6 @@
 [package]
 name = "omarchy-imageview"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Image viewer and browser for the Omarchy desktop"
 license = "MIT"

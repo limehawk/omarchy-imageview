@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{self, gdk, gio, glib};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::core::folder::{FolderMonitor, SortMode};
@@ -157,10 +157,19 @@ impl ImageViewerWindow {
                             crate::actions::clipboard::copy_texture_to_clipboard(&tex);
                         }
                     }
+                    "filmstrip" => {
+                        let visible = state_ref2.borrow_mut().toggle_filmstrip();
+                        state_ref2.borrow().save();
+                        if !viewer_ref.borrow().window.is_fullscreen() {
+                            single_ref2.borrow().set_filmstrip_visible(visible);
+                        }
+                    }
                     _ => {}
                 }
             });
         }
+
+        let slideshow_epoch = Rc::new(Cell::new(0u64));
 
         // Keybindings
         let controller = gtk4::EventControllerKey::new();
@@ -168,6 +177,7 @@ impl ImageViewerWindow {
         let state_ref = state.clone();
         let window_ref = window.clone();
         let single_ref = single_view.clone();
+        let slideshow_epoch_keys = slideshow_epoch.clone();
 
         controller.connect_key_pressed(move |_ctrl, keyval, _keycode, modifiers| {
             let ctrl = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
@@ -206,7 +216,8 @@ impl ImageViewerWindow {
                     if window_ref.is_fullscreen() {
                         window_ref.unfullscreen();
                         if is_single {
-                            single_ref.borrow().set_filmstrip_visible(true);
+                            let show = state_ref.borrow().filmstrip_visible;
+                            single_ref.borrow().set_filmstrip_visible(show);
                         }
                         let v = viewer_ref.borrow();
                         v.toolbar.container.set_visible(true);
@@ -255,13 +266,10 @@ impl ImageViewerWindow {
                     glib::Propagation::Stop
                 }
                 "space" if is_single => {
-                    single_ref.borrow().navigate_next();
-                    let v = viewer_ref.borrow();
-                    v.toolbar.update_single_mode();
-                    if v.info_panel.container.is_visible() {
-                        let path = v.state.borrow().current_file().map(|p| p.to_path_buf());
-                        v.info_panel.update(path.as_deref());
+                    if !single_ref.borrow().handle_space() {
+                        single_ref.borrow().navigate_next();
                     }
+                    refresh_single(&viewer_ref.borrow());
                     glib::Propagation::Stop
                 }
                 "Home" if is_single => {
@@ -314,17 +322,12 @@ impl ImageViewerWindow {
                     single_ref.borrow().zoom_to_actual();
                     glib::Propagation::Stop
                 }
-                // Delete -> trash current file
                 "Delete" if is_single => {
-                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
-                    if let Some(path) = path {
-                        if crate::actions::file_ops::trash_file(&path) {
-                            state_ref.borrow_mut().remove_file(&path);
-                            single_ref.borrow().refresh_image();
-                            let v = viewer_ref.borrow();
-                            v.toolbar.update_single_mode();
-                        }
-                    }
+                    trash_current(&state_ref, &single_ref, &viewer_ref);
+                    glib::Propagation::Stop
+                }
+                "Delete" if !is_single => {
+                    trash_grid_selection(&viewer_ref, &state_ref);
                     glib::Propagation::Stop
                 }
                 // Ctrl+r -> rotate 90, Ctrl+Shift+r -> rotate 270 (display only until save)
@@ -377,7 +380,6 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
-                // Ctrl+e -> open in Pinta (not xdg-open — we are the default handler)
                 "e" if ctrl && is_single => {
                     let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
                     if let Some(path) = path {
@@ -419,6 +421,54 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
+                "s" if !ctrl && is_single => {
+                    single_ref.borrow().cycle_scale_mode();
+                    refresh_single(&viewer_ref.borrow());
+                    glib::Propagation::Stop
+                }
+                "t" if !ctrl && is_single => {
+                    let delta = if shift { -1 } else { 1 };
+                    state_ref.borrow_mut().bump_slideshow(delta);
+                    slideshow_epoch_keys.set(slideshow_epoch_keys.get() + 1);
+                    arm_slideshow(viewer_ref.clone(), slideshow_epoch_keys.clone());
+                    refresh_single(&viewer_ref.borrow());
+                    glib::Propagation::Stop
+                }
+                "h" if !ctrl && is_single => {
+                    single_ref.borrow().flip_displayed(true);
+                    refresh_single(&viewer_ref.borrow());
+                    glib::Propagation::Stop
+                }
+                "v" if !ctrl && is_single => {
+                    single_ref.borrow().flip_displayed(false);
+                    refresh_single(&viewer_ref.borrow());
+                    glib::Propagation::Stop
+                }
+                "u" if !ctrl && is_single => {
+                    single_ref.borrow().toggle_nearest();
+                    glib::Propagation::Stop
+                }
+                "r" if !ctrl && is_single => {
+                    single_ref.borrow().zoom_to_fit();
+                    refresh_single(&viewer_ref.borrow());
+                    glib::Propagation::Stop
+                }
+                "p" if ctrl && is_single => {
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        crate::actions::file_ops::print_file(&path);
+                    }
+                    glib::Propagation::Stop
+                }
+                "x" if ctrl && !shift && is_single => {
+                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
+                    if let Some(path) = path {
+                        if crate::actions::file_ops::trash_file(&path) {
+                            window_ref.close();
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
                 _ => glib::Propagation::Proceed,
             }
         });
@@ -431,10 +481,9 @@ impl ImageViewerWindow {
         self.state.borrow_mut().view_mode = ViewMode::Grid;
         self.grid_view.load();
         self.stack.set_visible_child_name("grid");
+        self.toolbar.container.set_visible(true);
         self.toolbar.update_grid_mode();
-        // Hide info panel when switching to grid
         self.info_panel.container.set_visible(false);
-        // Start filesystem monitoring
         self.start_monitor();
     }
 
@@ -443,7 +492,10 @@ impl ImageViewerWindow {
         self.stack.set_visible_child_name("single");
         self.single_view.borrow().load();
         self.toolbar.update_single_mode();
-        // Start filesystem monitoring
+        if !self.window.is_fullscreen() {
+            let show = self.state.borrow().filmstrip_visible;
+            self.single_view.borrow().set_filmstrip_visible(show);
+        }
         self.start_monitor();
     }
 
@@ -478,6 +530,78 @@ impl ImageViewerWindow {
     pub fn present(&self) {
         self.window.present();
     }
+}
+
+fn refresh_single(v: &ImageViewerWindow) {
+    v.toolbar.update_single_mode();
+    if v.info_panel.container.is_visible() {
+        let path = v.state.borrow().current_file().map(|p| p.to_path_buf());
+        v.info_panel.update(path.as_deref());
+    }
+}
+
+fn trash_current(
+    state: &Rc<RefCell<AppState>>,
+    single: &Rc<RefCell<SingleView>>,
+    viewer: &Rc<RefCell<ImageViewerWindow>>,
+) {
+    let path = state.borrow().current_file().map(|p| p.to_path_buf());
+    if let Some(path) = path {
+        if crate::actions::file_ops::trash_file(&path) {
+            state.borrow_mut().remove_file(&path);
+            single.borrow().refresh_image();
+            refresh_single(&viewer.borrow());
+        }
+    }
+}
+
+fn trash_grid_selection(
+    viewer: &Rc<RefCell<ImageViewerWindow>>,
+    state: &Rc<RefCell<AppState>>,
+) {
+    let paths = viewer.borrow().grid_view.selected_paths();
+    if paths.is_empty() {
+        return;
+    }
+    for path in &paths {
+        if crate::actions::file_ops::trash_file(path) {
+            state.borrow_mut().remove_file(path);
+        }
+    }
+    let v = viewer.borrow();
+    v.grid_view.load();
+    v.toolbar.update_grid_mode();
+}
+
+fn arm_slideshow(
+    viewer: Rc<RefCell<ImageViewerWindow>>,
+    epoch: Rc<Cell<u64>>,
+) {
+    let my = epoch.get();
+    let secs = viewer.borrow().state.borrow().slideshow_secs;
+    if secs == 0 {
+        return;
+    }
+    glib::timeout_add_local_once(std::time::Duration::from_secs(secs as u64), move || {
+        if epoch.get() != my {
+            return;
+        }
+        let (active, still_on) = {
+            let v = viewer.borrow();
+            let st = v.state.borrow();
+            (
+                st.view_mode == ViewMode::Single && st.slideshow_secs > 0,
+                st.slideshow_secs > 0,
+            )
+        };
+        if active {
+            viewer.borrow().single_view.borrow().navigate_next();
+            refresh_single(&viewer.borrow());
+        }
+        if still_on {
+            arm_slideshow(viewer, epoch);
+        }
+    });
 }
 
 fn apply_sort(

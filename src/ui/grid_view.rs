@@ -85,7 +85,7 @@ struct ThumbResult {
 pub struct GridView {
     pub container: gtk4::ScrolledWindow,
     store: gio::ListStore,
-    selection: gtk4::SingleSelection,
+    selection: gtk4::MultiSelection,
     #[allow(dead_code)]
     grid: gtk4::GridView,
     state: Rc<RefCell<AppState>>,
@@ -96,8 +96,7 @@ pub struct GridView {
 impl GridView {
     pub fn new(state: Rc<RefCell<AppState>>) -> Self {
         let store = gio::ListStore::new::<ImageItem>();
-        let selection = gtk4::SingleSelection::new(Some(store.clone()));
-        selection.set_autoselect(true);
+        let selection = gtk4::MultiSelection::new(Some(store.clone()));
 
         let factory = gtk4::SignalListItemFactory::new();
         let bound_widgets: Rc<RefCell<HashMap<u32, gtk4::Picture>>> =
@@ -180,6 +179,7 @@ impl GridView {
         let grid = gtk4::GridView::new(Some(selection.clone()), Some(factory));
         grid.set_min_columns(2);
         grid.set_max_columns(20);
+        grid.set_enable_rubberband(true);
         grid.add_css_class("grid-view");
 
         // Activate (double-click / Enter)
@@ -217,6 +217,20 @@ impl GridView {
         self.on_activate.borrow_mut().replace(Box::new(cb));
     }
 
+    /// Paths of every selected thumbnail, in store order.
+    pub fn selected_paths(&self) -> Vec<PathBuf> {
+        let n = self.store.n_items();
+        let mut out = Vec::new();
+        for i in 0..n {
+            if self.selection.is_selected(i) {
+                if let Some(item) = self.store.item(i).and_downcast::<ImageItem>() {
+                    out.push(PathBuf::from(item.path()));
+                }
+            }
+        }
+        out
+    }
+
     /// Populate the grid from current AppState files and kick off thumbnail loading.
     pub fn load(&self) {
         self.store.remove_all();
@@ -231,8 +245,8 @@ impl GridView {
             self.store.append(&item);
         }
 
-        // Select current index
-        self.selection.set_selected(current_index as u32);
+        self.selection.unselect_all();
+        self.selection.select_item(current_index as u32, true);
 
         // Spawn async thumbnail loading
         if !files.is_empty() {

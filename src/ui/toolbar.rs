@@ -22,27 +22,42 @@ pub struct Toolbar {
 
 impl Toolbar {
     pub fn new(state: Rc<RefCell<AppState>>) -> Self {
-        let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         container.add_css_class("toolbar");
+
+        let copy = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
+        copy.add_css_class("toolbar-copy");
+        copy.set_hexpand(true);
+        copy.set_valign(gtk4::Align::Center);
+        copy.set_halign(gtk4::Align::Start);
 
         let path_label = gtk4::Label::new(None);
         path_label.set_xalign(0.0);
-        path_label.add_css_class("accent-text");
+        path_label.add_css_class("toolbar-identity");
         path_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         path_label.set_hexpand(true);
-        container.append(&path_label);
+        copy.append(&path_label);
 
         let info_label = gtk4::Label::new(None);
-        info_label.add_css_class("status-text");
-        container.append(&info_label);
+        info_label.set_xalign(0.0);
+        info_label.add_css_class("toolbar-meta");
+        copy.append(&info_label);
+
+        container.append(&copy);
 
         let on_action: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
 
+        let tools = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        tools.add_css_class("toolbar-tools");
+        tools.set_valign(gtk4::Align::Center);
+        tools.set_halign(gtk4::Align::End);
+
         let sort_btn = gtk4::MenuButton::new();
-        sort_btn.set_label("Sort");
-        sort_btn.set_always_show_arrow(true);
-        sort_btn.add_css_class("flat");
-        sort_btn.add_css_class("sort-btn");
+        sort_btn.set_always_show_arrow(false);
+        sort_btn.set_has_frame(false);
+        sort_btn.add_css_class("pixel-btn");
+        sort_btn.set_valign(gtk4::Align::Center);
+        sort_btn.set_child(Some(&super::icons::image(&super::icons::SORT)));
         sort_btn.set_tooltip_text(Some(state.borrow().sort.tooltip()));
 
         let sort_date = gtk4::CheckButton::with_label("Date");
@@ -92,19 +107,18 @@ impl Toolbar {
                 pop.popdown();
             });
         }
-        container.append(&sort_btn);
+        tools.append(&sort_btn);
 
-        let actions_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-        for (name, icon, tooltip) in [
-            ("save", "media-floppy-symbolic", "Save (Ctrl+S)"),
-            ("rotate", "object-rotate-right-symbolic", "Rotate (Ctrl+R)"),
-            ("copy", "edit-copy-symbolic", "Copy (Ctrl+C)"),
-            ("trash", "user-trash-symbolic", "Trash (Delete)"),
-            ("info", "dialog-information-symbolic", "Info (Ctrl+I)"),
+        let actions_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        for (name, glyph, tooltip) in [
+            ("save", &super::icons::SAVE, "Save (Ctrl+S)"),
+            ("rotate", &super::icons::ROTATE, "Rotate (Ctrl+R)"),
+            ("copy", &super::icons::COPY, "Copy (Ctrl+C)"),
+            ("trash", &super::icons::TRASH, "Trash (Delete)"),
+            ("filmstrip", &super::icons::FILMSTRIP, "Filmstrip"),
+            ("info", &super::icons::INFO, "Info (Ctrl+I)"),
         ] {
-            let btn = gtk4::Button::from_icon_name(icon);
-            btn.set_tooltip_text(Some(tooltip));
-            btn.add_css_class("flat");
+            let btn = super::icons::button(name, glyph, tooltip);
             let action_name = name.to_string();
             let cb = on_action.clone();
             btn.connect_clicked(move |_| {
@@ -114,7 +128,8 @@ impl Toolbar {
             });
             actions_box.append(&btn);
         }
-        container.append(&actions_box);
+        tools.append(&actions_box);
+        container.append(&tools);
 
         Self {
             container,
@@ -162,21 +177,23 @@ impl Toolbar {
 
     pub fn update_grid_mode(&self) {
         let state = self.state.borrow();
-        let folder = state
+        let folder_path = state
             .current_folder
             .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        self.path_label.set_text(&folder);
+            .map(|p| p.display().to_string());
+        let folder_name = state
+            .current_folder
+            .as_ref()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+        self.path_label
+            .set_text(folder_name.as_deref().unwrap_or("--"));
+        self.path_label
+            .set_tooltip_text(folder_path.as_deref());
         self.info_label
             .set_text(&format!("{} images", state.files.len()));
         self.sync_sort_button(&state);
         self.actions_box.set_visible(false);
 
-        let folder_name = state
-            .current_folder
-            .as_ref()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
         drop(state);
         self.set_window_title(folder_name.as_deref(), false);
     }
@@ -187,18 +204,34 @@ impl Toolbar {
             p.file_name().map(|n| n.to_string_lossy().into_owned())
         });
         if let Some(ref name) = filename {
-            let label = if state.pending_rotation != 0 {
+            let label = if state.is_dirty() {
                 format!("{name} *")
             } else {
                 name.clone()
             };
             self.path_label.set_text(&label);
+        } else {
+            self.path_label.set_text("--");
         }
-        self.info_label
-            .set_text(&format!("{} / {}", state.index + 1, state.files.len()));
+        self.path_label.set_tooltip_text(
+            state
+                .current_file()
+                .map(|p| p.display().to_string())
+                .as_deref(),
+        );
+        // Position always. Scale only when it isn't Fit. Slideshow only when running.
+        let mut info = format!("{} / {}", state.index + 1, state.files.len());
+        if state.scale_mode != crate::state::app_state::ScaleMode::Fit {
+            info.push_str("  ·  ");
+            info.push_str(state.scale_mode.label());
+        }
+        if state.slideshow_secs > 0 {
+            info.push_str(&format!("  ·  {}s", state.slideshow_secs));
+        }
+        self.info_label.set_text(&info);
         self.sync_sort_button(&state);
         self.actions_box.set_visible(true);
-        let dirty = state.pending_rotation != 0;
+        let dirty = state.is_dirty();
         drop(state);
         self.set_window_title(filename.as_deref(), dirty);
     }

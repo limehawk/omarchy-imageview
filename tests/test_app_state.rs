@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use image::{DynamicImage, RgbImage};
 use omarchy_imageview::core::folder::SortMode;
-use omarchy_imageview::state::app_state::{AppState, ViewMode};
+use omarchy_imageview::state::app_state::{AppState, ScaleMode, ViewMode};
 
 fn save_img(dir: &std::path::Path, name: &str) -> PathBuf {
     let p = dir.join(name);
@@ -23,6 +23,9 @@ fn test_initial_state() {
     assert!(!state.zoom_fit);
     assert_eq!(state.zoom, 1.0);
     assert_eq!(state.pending_rotation, 0);
+    assert!(!state.pending_flip_h);
+    assert_eq!(state.scale_mode, ScaleMode::Fit);
+    assert_eq!(state.slideshow_secs, 0);
     assert_eq!(state.sort, SortMode::Date);
 }
 
@@ -93,10 +96,40 @@ fn test_navigate_clamps() {
     state.load_folder(dir.path(), None);
     state.index = 4;
     state.navigate_next();
-    assert_eq!(state.index, 4); // stays at end
-    state.index = 0;
+    assert_eq!(state.index, 0); // wraps
     state.navigate_prev();
-    assert_eq!(state.index, 0); // stays at start
+    assert_eq!(state.index, 4);
+}
+
+#[test]
+fn test_cycle_scale_mode() {
+    let mut state = AppState::new(Some(PathBuf::from("/tmp/test-scale")));
+    assert_eq!(state.scale_mode, ScaleMode::Fit);
+    assert_eq!(state.cycle_scale_mode(), ScaleMode::Fill);
+    assert_eq!(state.cycle_scale_mode(), ScaleMode::Actual);
+    assert!(!state.zoom_fit);
+    assert_eq!(state.cycle_scale_mode(), ScaleMode::Fit);
+}
+
+#[test]
+fn test_bump_slideshow() {
+    let mut state = AppState::new(Some(PathBuf::from("/tmp/test-ss")));
+    assert_eq!(state.bump_slideshow(1), 1);
+    assert_eq!(state.bump_slideshow(1), 2);
+    assert_eq!(state.bump_slideshow(-1), 1);
+    assert_eq!(state.bump_slideshow(-1), 0);
+    assert_eq!(state.bump_slideshow(-1), 0);
+    assert_eq!(state.bump_slideshow(40), 30);
+}
+
+#[test]
+fn test_flip_is_dirty() {
+    let mut state = AppState::new(Some(PathBuf::from("/tmp/test-flip")));
+    assert!(!state.is_dirty());
+    state.toggle_flip_h();
+    assert!(state.is_dirty());
+    state.toggle_flip_h();
+    assert!(!state.is_dirty());
 }
 
 #[test]
@@ -130,6 +163,19 @@ fn test_persist_and_restore() {
     let mut state2 = AppState::new(Some(config.path().to_path_buf()));
     state2.restore();
     assert_eq!(state2.last_folder, Some(dir.path().to_path_buf()));
+}
+
+#[test]
+fn test_filmstrip_pref_persists() {
+    let config = tempfile::tempdir().unwrap();
+    let mut state = AppState::new(Some(config.path().to_path_buf()));
+    assert!(state.filmstrip_visible);
+    assert!(!state.toggle_filmstrip());
+    state.save();
+
+    let mut state2 = AppState::new(Some(config.path().to_path_buf()));
+    state2.restore();
+    assert!(!state2.filmstrip_visible);
 }
 
 #[test]

@@ -1,5 +1,7 @@
 use image::{DynamicImage, Rgba, RgbaImage};
-use omarchy_imageview::core::image_loader::apply_orientation;
+use omarchy_imageview::core::image_loader::{
+    apply_orientation, compose_flip_h, compose_flip_v, compose_transform,
+};
 
 fn sample() -> DynamicImage {
     // 2x1: left red, right blue
@@ -51,4 +53,21 @@ fn orientation_unknown_passthrough() {
     let img = apply_orientation(sample(), 99);
     assert_eq!(img.width(), 2);
     assert_eq!(px(&img, 0, 0), [255, 0, 0, 255]);
+}
+
+#[test]
+fn flip_h_then_again_is_identity() {
+    assert_eq!(compose_flip_h(compose_flip_h(1)), 1);
+    assert_eq!(compose_flip_v(compose_flip_v(6)), 6);
+}
+
+#[test]
+fn compose_transform_identity() {
+    assert_eq!(compose_transform(1, 0, false, false), 1);
+}
+
+#[test]
+fn compose_transform_90_then_flip_h() {
+    // 1 rotated 90cw -> 6, then flip H -> 5
+    assert_eq!(compose_transform(1, 90, true, false), 5);
 }

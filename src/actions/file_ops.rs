@@ -16,16 +16,38 @@ pub fn trash_file(path: &Path) -> bool {
     }
 }
 
-/// Open the file in Pinta. Never `xdg-open` — this app is the default image
-/// handler, so that would just relaunch us.
+/// Editors we try, in order. Stock Omarchy binds Tensaku; Pinta is the fallback.
+pub fn editor_commands() -> &'static [&'static str] {
+    &["tensaku-edit", "tensaku", "pinta"]
+}
+
+/// Open the file in an editor. Never `xdg-open` — this app is the default
+/// image handler, so that would just relaunch us.
 pub fn open_in_editor(path: &Path) -> bool {
-    match std::process::Command::new("pinta").arg(path).spawn() {
+    for cmd in editor_commands() {
+        match std::process::Command::new(cmd).arg(path).spawn() {
+            Ok(_) => {
+                log::info!("open_in_editor: {cmd} {}", path.display());
+                return true;
+            }
+            Err(e) => {
+                log::debug!("open_in_editor: {cmd} unavailable ({e})");
+            }
+        }
+    }
+    log::error!("open_in_editor: no editor found for {}", path.display());
+    false
+}
+
+/// Send the file to the default CUPS printer (`lp`), same as Omarchy's imv bind.
+pub fn print_file(path: &Path) -> bool {
+    match std::process::Command::new("lp").arg(path).spawn() {
         Ok(_) => {
-            log::info!("open_in_editor: pinta {}", path.display());
+            log::info!("print_file: lp {}", path.display());
             true
         }
         Err(e) => {
-            log::error!("open_in_editor: pinta failed for {}: {e}", path.display());
+            log::error!("print_file: lp failed for {}: {e}", path.display());
             false
         }
     }
@@ -69,17 +91,22 @@ pub fn move_file(path: &Path, dest_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Persist a clockwise display rotation to `path`.
+pub fn save_rotation(path: &Path, degrees: u32) -> bool {
+    save_transform(path, degrees, false, false)
+}
+
+/// Persist pending display rotation and flips to `path`.
 ///
 /// JPEG/TIFF: lossless EXIF orientation update via exiftool.
-/// Other rasters: rotate pixels and overwrite.
+/// Other rasters: transform pixels and overwrite.
 /// HEIC/SVG/JXL: not written (no safe encoder path).
-pub fn save_rotation(path: &Path, degrees: u32) -> bool {
+pub fn save_transform(path: &Path, degrees: u32, flip_h: bool, flip_v: bool) -> bool {
     let degrees = degrees % 360;
-    if degrees == 0 {
+    if degrees == 0 && !flip_h && !flip_v {
         return true;
     }
-    if ![90, 180, 270].contains(&degrees) {
-        log::warn!("save_rotation: unsupported degrees {degrees}");
+    if degrees != 0 && ![90, 180, 270].contains(&degrees) {
+        log::warn!("save_transform: unsupported degrees {degrees}");
         return false;
     }
 
@@ -91,26 +118,30 @@ pub fn save_rotation(path: &Path, degrees: u32) -> bool {
 
     let ok = match ext.as_str() {
         "jpg" | "jpeg" | "jpe" | "jfif" | "tif" | "tiff" => {
-            save_via_exif(path, degrees) || save_via_pixels(path, degrees)
+            save_via_exif(path, degrees, flip_h, flip_v)
+                || save_via_pixels(path, degrees, flip_h, flip_v)
         }
         "heic" | "heif" | "svg" | "jxl" => {
             log::warn!(
-                "save_rotation: cannot write rotation for .{ext} ({})",
+                "save_transform: cannot write transform for .{ext} ({})",
                 path.display()
             );
             false
         }
-        _ => save_via_pixels(path, degrees),
+        _ => save_via_pixels(path, degrees, flip_h, flip_v),
     };
     if ok {
-        log::info!("save_rotation: {} rotated {degrees}deg", path.display());
+        log::info!(
+            "save_transform: {} rot={degrees} flip_h={flip_h} flip_v={flip_v}",
+            path.display()
+        );
     }
     ok
 }
 
-fn save_via_exif(path: &Path, degrees: u32) -> bool {
+fn save_via_exif(path: &Path, degrees: u32, flip_h: bool, flip_v: bool) -> bool {
     let current = crate::core::image_loader::read_exif_orientation(path).unwrap_or(1);
-    let tag = crate::core::image_loader::compose_orientation_cw(current, degrees);
+    let tag = crate::core::image_loader::compose_transform(current, degrees, flip_h, flip_v);
     write_exif_orientation(path, tag)
 }
 
@@ -140,15 +171,21 @@ fn write_exif_orientation(path: &Path, tag: u32) -> bool {
     }
 }
 
-fn save_via_pixels(path: &Path, degrees: u32) -> bool {
+fn save_via_pixels(path: &Path, degrees: u32, flip_h: bool, flip_v: bool) -> bool {
     let Some(img) = crate::core::image_loader::load_image(path) else {
         return false;
     };
-    let rotated = crate::core::image_loader::rotate_degrees(img, degrees);
-    match rotated.save(path) {
+    let mut out = crate::core::image_loader::rotate_degrees(img, degrees);
+    if flip_h {
+        out = out.fliph();
+    }
+    if flip_v {
+        out = out.flipv();
+    }
+    match out.save(path) {
         Ok(()) => true,
         Err(e) => {
-            log::error!("save_rotation: pixel save failed for {}: {e}", path.display());
+            log::error!("save_transform: pixel save failed for {}: {e}", path.display());
             false
         }
     }
