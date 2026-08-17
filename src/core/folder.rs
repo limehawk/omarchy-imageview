@@ -32,17 +32,10 @@ impl SortMode {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Date => "Date",
-            Self::Name => "Name",
-        }
-    }
-
     pub fn tooltip(self) -> &'static str {
         match self {
-            Self::Date => "Sorted by date — click for name",
-            Self::Name => "Sorted by name — click for date",
+            Self::Date => "Sorted by date",
+            Self::Name => "Sorted by name",
         }
     }
 }

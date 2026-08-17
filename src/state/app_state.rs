@@ -100,6 +100,15 @@ impl AppState {
         self.sort = self.sort.next();
     }
 
+    /// Returns true if the mode changed.
+    pub fn set_sort(&mut self, sort: SortMode) -> bool {
+        if self.sort == sort {
+            return false;
+        }
+        self.sort = sort;
+        true
+    }
+
     pub fn remove_file(&mut self, path: &Path) {
         if let Some(pos) = self.files.iter().position(|f| f == path) {
             self.files.remove(pos);

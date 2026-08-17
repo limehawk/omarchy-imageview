@@ -1,15 +1,19 @@
 use gtk4::prelude::*;
 use gtk4::{self};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::core::folder::SortMode;
 use crate::state::app_state::AppState;
 
 pub struct Toolbar {
     pub container: gtk4::Box,
     path_label: gtk4::Label,
     info_label: gtk4::Label,
-    sort_btn: gtk4::Button,
+    sort_btn: gtk4::MenuButton,
+    sort_date: gtk4::CheckButton,
+    sort_name: gtk4::CheckButton,
+    sort_syncing: Rc<Cell<bool>>,
     actions_box: gtk4::Box,
     state: Rc<RefCell<AppState>>,
     on_action: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
@@ -34,23 +38,66 @@ impl Toolbar {
 
         let on_action: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> = Rc::new(RefCell::new(None));
 
-        let sort_btn = gtk4::Button::with_label("Date");
+        let sort_btn = gtk4::MenuButton::new();
+        sort_btn.set_label("Sort");
+        sort_btn.set_always_show_arrow(true);
         sort_btn.add_css_class("flat");
-        sort_btn.set_tooltip_text(Some("Sorted by date — click for name"));
+        sort_btn.add_css_class("sort-btn");
+        sort_btn.set_tooltip_text(Some(state.borrow().sort.tooltip()));
+
+        let sort_date = gtk4::CheckButton::with_label("Date");
+        let sort_name = gtk4::CheckButton::with_label("Name");
+        sort_name.set_group(Some(&sort_date));
+
+        let sort_menu = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        sort_menu.add_css_class("sort-menu");
+        sort_menu.append(&sort_date);
+        sort_menu.append(&sort_name);
+
+        let popover = gtk4::Popover::new();
+        popover.set_child(Some(&sort_menu));
+        sort_btn.set_popover(Some(&popover));
+
+        match state.borrow().sort {
+            SortMode::Date => sort_date.set_active(true),
+            SortMode::Name => sort_name.set_active(true),
+        }
+
+        let sort_syncing = Rc::new(Cell::new(false));
         {
             let cb = on_action.clone();
-            sort_btn.connect_clicked(move |_| {
-                if let Some(ref f) = *cb.borrow() {
-                    f("sort");
+            let pop = popover.clone();
+            let syncing = sort_syncing.clone();
+            sort_date.connect_toggled(move |btn| {
+                if syncing.get() || !btn.is_active() {
+                    return;
                 }
+                if let Some(ref f) = *cb.borrow() {
+                    f("sort-date");
+                }
+                pop.popdown();
+            });
+        }
+        {
+            let cb = on_action.clone();
+            let pop = popover.clone();
+            let syncing = sort_syncing.clone();
+            sort_name.connect_toggled(move |btn| {
+                if syncing.get() || !btn.is_active() {
+                    return;
+                }
+                if let Some(ref f) = *cb.borrow() {
+                    f("sort-name");
+                }
+                pop.popdown();
             });
         }
         container.append(&sort_btn);
 
         let actions_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         for (name, icon, tooltip) in [
-            ("rotate", "object-rotate-right-symbolic", "Rotate (Ctrl+R)"),
             ("save", "media-floppy-symbolic", "Save (Ctrl+S)"),
+            ("rotate", "object-rotate-right-symbolic", "Rotate (Ctrl+R)"),
             ("copy", "edit-copy-symbolic", "Copy (Ctrl+C)"),
             ("trash", "user-trash-symbolic", "Trash (Delete)"),
             ("info", "dialog-information-symbolic", "Info (Ctrl+I)"),
@@ -74,6 +121,9 @@ impl Toolbar {
             path_label,
             info_label,
             sort_btn,
+            sort_date,
+            sort_name,
+            sort_syncing,
             actions_box,
             state,
             on_action,
@@ -86,7 +136,12 @@ impl Toolbar {
     }
 
     fn sync_sort_button(&self, state: &AppState) {
-        self.sort_btn.set_label(state.sort.label());
+        self.sort_syncing.set(true);
+        match state.sort {
+            SortMode::Date => self.sort_date.set_active(true),
+            SortMode::Name => self.sort_name.set_active(true),
+        }
+        self.sort_syncing.set(false);
         self.sort_btn.set_tooltip_text(Some(state.sort.tooltip()));
     }
 

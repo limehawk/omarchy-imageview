@@ -111,6 +111,16 @@ pub fn generate_css(colors: &HashMap<String, String>) -> String {
         color: {accent};
     }}
 
+    menubutton.sort-btn,
+    menubutton.sort-btn > button {{
+        min-width: 0;
+        padding: 2px 6px;
+    }}
+
+    .sort-menu checkbutton {{
+        padding: 4px 10px;
+    }}
+
     .empty-state {{
         color: alpha({fg}, 0.4);
         font-size: 1.2em;

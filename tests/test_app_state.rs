@@ -41,6 +41,15 @@ fn test_cycle_sort_persists() {
 }
 
 #[test]
+fn test_set_sort() {
+    let mut state = AppState::new(Some(PathBuf::from("/tmp/test-set-sort")));
+    assert!(!state.set_sort(SortMode::Date));
+    assert!(state.set_sort(SortMode::Name));
+    assert_eq!(state.sort, SortMode::Name);
+    assert!(!state.set_sort(SortMode::Name));
+}
+
+#[test]
 fn test_navigate_discards_pending_rotation() {
     let dir = tempfile::tempdir().unwrap();
     make_images(dir.path(), 3);

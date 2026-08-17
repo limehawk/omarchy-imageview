@@ -3,7 +3,7 @@ use gtk4::{self, gdk, gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::core::folder::FolderMonitor;
+use crate::core::folder::{FolderMonitor, SortMode};
 use crate::state::app_state::{AppState, ViewMode};
 use super::grid_view::GridView;
 use super::info_panel::InfoPanel;
@@ -145,25 +145,11 @@ impl ImageViewerWindow {
                         single_ref2.borrow().save_rotation();
                         viewer_ref.borrow().toolbar.update_single_mode();
                     }
-                    "sort" => {
-                        let current = state_ref2.borrow().current_file().map(|p| p.to_path_buf());
-                        let folder = state_ref2.borrow().current_folder.clone();
-                        state_ref2.borrow_mut().cycle_sort();
-                        state_ref2.borrow().save();
-                        if let Some(folder) = folder {
-                            state_ref2.borrow_mut().load_folder(&folder, current.as_deref());
-                        }
-                        let v = viewer_ref.borrow();
-                        match state_ref2.borrow().view_mode {
-                            ViewMode::Grid => {
-                                v.grid_view.load();
-                                v.toolbar.update_grid_mode();
-                            }
-                            ViewMode::Single => {
-                                v.single_view.borrow().load();
-                                v.toolbar.update_single_mode();
-                            }
-                        }
+                    "sort-date" => {
+                        apply_sort(&state_ref2, &viewer_ref, SortMode::Date);
+                    }
+                    "sort-name" => {
+                        apply_sort(&state_ref2, &viewer_ref, SortMode::Name);
                     }
                     "copy" => {
                         let tex = single_ref2.borrow().current_texture();
@@ -491,6 +477,33 @@ impl ImageViewerWindow {
 
     pub fn present(&self) {
         self.window.present();
+    }
+}
+
+fn apply_sort(
+    state: &Rc<RefCell<AppState>>,
+    viewer: &Rc<RefCell<ImageViewerWindow>>,
+    mode: SortMode,
+) {
+    let current = state.borrow().current_file().map(|p| p.to_path_buf());
+    let folder = state.borrow().current_folder.clone();
+    if !state.borrow_mut().set_sort(mode) {
+        return;
+    }
+    state.borrow().save();
+    if let Some(folder) = folder {
+        state.borrow_mut().load_folder(&folder, current.as_deref());
+    }
+    let v = viewer.borrow();
+    match state.borrow().view_mode {
+        ViewMode::Grid => {
+            v.grid_view.load();
+            v.toolbar.update_grid_mode();
+        }
+        ViewMode::Single => {
+            v.single_view.borrow().load();
+            v.toolbar.update_single_mode();
+        }
     }
 }
 
