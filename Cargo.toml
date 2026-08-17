@@ -2,6 +2,14 @@
 name = "omarchy-imageview"
 version = "0.2.0"
 edition = "2021"
+description = "Image viewer and browser for the Omarchy desktop"
+license = "MIT"
+repository = "https://github.com/limehawk/omarchy-imageview"
+homepage = "https://github.com/limehawk/omarchy-imageview"
+readme = "README.md"
+authors = ["Limehawk <128890849+limehawk@users.noreply.github.com>"]
+keywords = ["image-viewer", "gtk4", "wayland", "omarchy"]
+categories = ["multimedia"]
 
 [dependencies]
 gtk4 = { version = "0.9", features = ["v4_12"] }

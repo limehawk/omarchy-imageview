@@ -1,3 +1,10 @@
+# Packaging leftovers
+*.pkg.tar.zst
+/pkg/
+
+# Agent planning notes — not part of the product
+docs/superpowers/
+
 # ===== Managed by gitignore-builder — do not edit below this line =====
 # Templates: Rust
 # Updated: 2026-04-08
