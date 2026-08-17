@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use image::{DynamicImage, RgbImage};
+use omarchy_imageview::core::folder::SortMode;
 use omarchy_imageview::state::app_state::{AppState, ViewMode};
 
 fn save_img(dir: &std::path::Path, name: &str) -> PathBuf {
@@ -19,8 +20,36 @@ fn test_initial_state() {
     assert!(state.files.is_empty());
     assert_eq!(state.index, 0);
     assert_eq!(state.view_mode, ViewMode::Grid);
-    assert!(state.zoom_fit);
+    assert!(!state.zoom_fit);
     assert_eq!(state.zoom, 1.0);
+    assert_eq!(state.pending_rotation, 0);
+    assert_eq!(state.sort, SortMode::Date);
+}
+
+#[test]
+fn test_cycle_sort_persists() {
+    let config = tempfile::tempdir().unwrap();
+    let mut state = AppState::new(Some(config.path().to_path_buf()));
+    assert_eq!(state.sort, SortMode::Date);
+    state.cycle_sort();
+    assert_eq!(state.sort, SortMode::Name);
+    state.save();
+
+    let mut state2 = AppState::new(Some(config.path().to_path_buf()));
+    state2.restore();
+    assert_eq!(state2.sort, SortMode::Name);
+}
+
+#[test]
+fn test_navigate_discards_pending_rotation() {
+    let dir = tempfile::tempdir().unwrap();
+    make_images(dir.path(), 3);
+    let mut state = AppState::new(Some(PathBuf::from("/tmp/test-rot")));
+    state.load_folder(dir.path(), None);
+    state.add_rotation(90);
+    assert_eq!(state.pending_rotation, 90);
+    state.navigate_next();
+    assert_eq!(state.pending_rotation, 0);
 }
 
 #[test]
@@ -75,8 +104,9 @@ fn test_load_folder_with_target() {
     let dir = tempfile::tempdir().unwrap();
     let images = make_images(dir.path(), 10);
     let mut state = AppState::new(Some(PathBuf::from("/tmp/test-target")));
-    state.load_folder(dir.path(), Some(&images[4]));
-    assert_eq!(state.index, 4);
+    let target = &images[4];
+    state.load_folder(dir.path(), Some(target));
+    assert_eq!(state.current_file(), Some(target.as_path()));
 }
 
 #[test]

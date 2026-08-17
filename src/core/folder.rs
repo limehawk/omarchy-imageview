@@ -3,15 +3,66 @@ use gtk4::gio;
 use gtk4::gio::prelude::*;
 use super::formats::is_supported;
 
-/// Scan a directory for supported image files, naturally sorted.
-pub fn scan_folder(directory: &Path) -> Vec<PathBuf> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    Date,
+    Name,
+}
+
+impl SortMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Date => Self::Name,
+            Self::Name => Self::Date,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Date => "date",
+            Self::Name => "name",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("name") {
+            Self::Name
+        } else {
+            Self::Date
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Date => "Date",
+            Self::Name => "Name",
+        }
+    }
+
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            Self::Date => "Sorted by date — click for name",
+            Self::Name => "Sorted by name — click for date",
+        }
+    }
+}
+
+/// Scan a directory for supported image files.
+pub fn scan_folder(directory: &Path, sort: SortMode) -> Vec<PathBuf> {
     if !directory.is_dir() {
+        log::warn!("scan_folder: not a directory: {}", directory.display());
         return Vec::new();
     }
 
-    let mut files: Vec<PathBuf> = std::fs::read_dir(directory)
-        .into_iter()
-        .flatten()
+    let read = match std::fs::read_dir(directory) {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("scan_folder: read_dir failed for {}: {e}", directory.display());
+            return Vec::new();
+        }
+    };
+
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = read
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
@@ -20,16 +71,29 @@ pub fn scan_folder(directory: &Path) -> Vec<PathBuf> {
                     .map(|n| is_supported(&n.to_string_lossy()))
                     .unwrap_or(false)
         })
+        .map(|p| {
+            let mtime = std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            (p, mtime)
+        })
         .collect();
 
     files.sort_by(|a, b| {
-        natord::compare(
-            &a.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
-            &b.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
-        )
+        let name_cmp = || {
+            natord::compare(
+                &a.0.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
+                &b.0.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
+            )
+        };
+        match sort {
+            SortMode::Date => b.1.cmp(&a.1).then_with(name_cmp),
+            SortMode::Name => name_cmp(),
+        }
     });
 
-    files
+    log::info!("scan_folder: {} images in {}", files.len(), directory.display());
+    files.into_iter().map(|(p, _)| p).collect()
 }
 
 pub struct FolderMonitor {

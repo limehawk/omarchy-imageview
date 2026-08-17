@@ -9,7 +9,7 @@ pub fn cache_key(path: &Path) -> Option<String> {
     let abs = path.canonicalize().ok()?;
     let meta = fs::metadata(&abs).ok()?;
     let mtime = meta.modified().ok()?;
-    let raw = format!("{}:{:?}", abs.display(), mtime);
+    let raw = format!("v2:{}:{:?}", abs.display(), mtime);
     let hash = Sha256::digest(raw.as_bytes());
     Some(format!("{:x}", hash))
 }

@@ -73,6 +73,7 @@ pub fn generate_css(colors: &HashMap<String, String>) -> String {
         background-color: {surface};
         border-top: 1px solid {sel_bg};
         padding: 6px 8px;
+        min-height: 80px;
     }}
 
     .filmstrip-item {{

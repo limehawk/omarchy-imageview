@@ -46,6 +46,7 @@ impl ImageViewerWindow {
 
         // Toolbar
         let toolbar = Rc::new(Toolbar::new(state.clone()));
+        toolbar.set_window(window.clone());
         main_box.append(&toolbar.container);
 
         // Horizontal content area: stack on left, info panel on right
@@ -84,6 +85,19 @@ impl ImageViewerWindow {
             info_panel: info_panel.clone(),
             _monitor: RefCell::new(None),
         }));
+
+        // Wire single-view navigation (filmstrip click, scroll wheel) -> refresh toolbar + info panel
+        {
+            let viewer_nav = viewer.clone();
+            single_view.borrow().set_on_navigate(move || {
+                let v = viewer_nav.borrow();
+                v.toolbar.update_single_mode();
+                if v.info_panel.container.is_visible() {
+                    let path = v.state.borrow().current_file().map(|p| p.to_path_buf());
+                    v.info_panel.update(path.as_deref());
+                }
+            });
+        }
 
         // Wire grid activate -> switch to single view
         {
@@ -124,10 +138,30 @@ impl ImageViewerWindow {
                         }
                     }
                     "rotate" => {
-                        let path = state_ref2.borrow().current_file().map(|p| p.to_path_buf());
-                        if let Some(path) = path {
-                            if crate::actions::file_ops::rotate_image(&path, 90) {
-                                single_ref2.borrow().refresh_image();
+                        single_ref2.borrow().rotate_displayed(90);
+                        viewer_ref.borrow().toolbar.update_single_mode();
+                    }
+                    "save" => {
+                        single_ref2.borrow().save_rotation();
+                        viewer_ref.borrow().toolbar.update_single_mode();
+                    }
+                    "sort" => {
+                        let current = state_ref2.borrow().current_file().map(|p| p.to_path_buf());
+                        let folder = state_ref2.borrow().current_folder.clone();
+                        state_ref2.borrow_mut().cycle_sort();
+                        state_ref2.borrow().save();
+                        if let Some(folder) = folder {
+                            state_ref2.borrow_mut().load_folder(&folder, current.as_deref());
+                        }
+                        let v = viewer_ref.borrow();
+                        match state_ref2.borrow().view_mode {
+                            ViewMode::Grid => {
+                                v.grid_view.load();
+                                v.toolbar.update_grid_mode();
+                            }
+                            ViewMode::Single => {
+                                v.single_view.borrow().load();
+                                v.toolbar.update_single_mode();
                             }
                         }
                     }
@@ -273,7 +307,7 @@ impl ImageViewerWindow {
                     single_ref.borrow().zoom_out();
                     glib::Propagation::Stop
                 }
-                "0" if is_single && ctrl => {
+                "0" if is_single => {
                     single_ref.borrow().zoom_to_fit();
                     glib::Propagation::Stop
                 }
@@ -307,15 +341,16 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
-                // Ctrl+r -> rotate 90, Ctrl+Shift+r -> rotate 270
+                // Ctrl+r -> rotate 90, Ctrl+Shift+r -> rotate 270 (display only until save)
                 "r" if ctrl && is_single => {
                     let degrees = if shift { 270 } else { 90 };
-                    let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
-                    if let Some(path) = path {
-                        if crate::actions::file_ops::rotate_image(&path, degrees) {
-                            single_ref.borrow().refresh_image();
-                        }
-                    }
+                    single_ref.borrow().rotate_displayed(degrees);
+                    viewer_ref.borrow().toolbar.update_single_mode();
+                    glib::Propagation::Stop
+                }
+                "s" if ctrl && is_single => {
+                    single_ref.borrow().save_rotation();
+                    viewer_ref.borrow().toolbar.update_single_mode();
                     glib::Propagation::Stop
                 }
                 // Ctrl+Shift+x -> trash and advance
@@ -356,13 +391,11 @@ impl ImageViewerWindow {
                     }
                     glib::Propagation::Stop
                 }
-                // Ctrl+e -> open in external editor
+                // Ctrl+e -> open in Pinta (not xdg-open — we are the default handler)
                 "e" if ctrl && is_single => {
                     let path = state_ref.borrow().current_file().map(|p| p.to_path_buf());
                     if let Some(path) = path {
-                        let _ = std::process::Command::new("xdg-open")
-                            .arg(&path)
-                            .spawn();
+                        crate::actions::file_ops::open_in_editor(&path);
                     }
                     glib::Propagation::Stop
                 }
