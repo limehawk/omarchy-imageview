@@ -6,6 +6,14 @@ Open a folder, browse the grid, click into a picture. It follows the current Oma
 
 ## Install
 
+### Arch
+
+```bash
+yay -S omarchy-imageview
+```
+
+### From source
+
 Needs `gtk4`, `librsvg`, `libheif`, and a Rust toolchain.
 
 ```bash
