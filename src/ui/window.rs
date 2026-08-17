@@ -145,11 +145,8 @@ impl ImageViewerWindow {
                         single_ref2.borrow().save_rotation();
                         viewer_ref.borrow().toolbar.update_single_mode();
                     }
-                    "sort-date" => {
-                        apply_sort(&state_ref2, &viewer_ref, SortMode::Date);
-                    }
-                    "sort-name" => {
-                        apply_sort(&state_ref2, &viewer_ref, SortMode::Name);
+                    action if let Some(mode) = SortMode::from_action(action) => {
+                        apply_sort(&state_ref2, &viewer_ref, mode);
                     }
                     "copy" => {
                         let tex = single_ref2.borrow().current_texture();

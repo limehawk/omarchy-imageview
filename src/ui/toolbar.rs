@@ -11,8 +11,7 @@ pub struct Toolbar {
     path_label: gtk4::Label,
     info_label: gtk4::Label,
     sort_btn: gtk4::MenuButton,
-    sort_date: gtk4::CheckButton,
-    sort_name: gtk4::CheckButton,
+    sort_items: Vec<(SortMode, gtk4::CheckButton)>,
     sort_syncing: Rc<Cell<bool>>,
     actions_box: gtk4::Box,
     state: Rc<RefCell<AppState>>,
@@ -60,49 +59,41 @@ impl Toolbar {
         sort_btn.set_child(Some(&super::icons::image(&super::icons::SORT)));
         sort_btn.set_tooltip_text(Some(state.borrow().sort.tooltip()));
 
-        let sort_date = gtk4::CheckButton::with_label("Date");
-        let sort_name = gtk4::CheckButton::with_label("Name");
-        sort_name.set_group(Some(&sort_date));
-
         let sort_menu = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         sort_menu.add_css_class("sort-menu");
-        sort_menu.append(&sort_date);
-        sort_menu.append(&sort_name);
+
+        let mut sort_items: Vec<(SortMode, gtk4::CheckButton)> = Vec::new();
+        let mut group: Option<gtk4::CheckButton> = None;
+        for &mode in SortMode::ALL {
+            let btn = gtk4::CheckButton::with_label(mode.label());
+            if let Some(ref g) = group {
+                btn.set_group(Some(g));
+            } else {
+                group = Some(btn.clone());
+            }
+            if mode == state.borrow().sort {
+                btn.set_active(true);
+            }
+            sort_menu.append(&btn);
+            sort_items.push((mode, btn));
+        }
 
         let popover = gtk4::Popover::new();
         popover.set_child(Some(&sort_menu));
         sort_btn.set_popover(Some(&popover));
 
-        match state.borrow().sort {
-            SortMode::Date => sort_date.set_active(true),
-            SortMode::Name => sort_name.set_active(true),
-        }
-
         let sort_syncing = Rc::new(Cell::new(false));
-        {
+        for (mode, btn) in &sort_items {
             let cb = on_action.clone();
             let pop = popover.clone();
             let syncing = sort_syncing.clone();
-            sort_date.connect_toggled(move |btn| {
+            let action = mode.action();
+            btn.connect_toggled(move |btn| {
                 if syncing.get() || !btn.is_active() {
                     return;
                 }
                 if let Some(ref f) = *cb.borrow() {
-                    f("sort-date");
-                }
-                pop.popdown();
-            });
-        }
-        {
-            let cb = on_action.clone();
-            let pop = popover.clone();
-            let syncing = sort_syncing.clone();
-            sort_name.connect_toggled(move |btn| {
-                if syncing.get() || !btn.is_active() {
-                    return;
-                }
-                if let Some(ref f) = *cb.borrow() {
-                    f("sort-name");
+                    f(action);
                 }
                 pop.popdown();
             });
@@ -136,8 +127,7 @@ impl Toolbar {
             path_label,
             info_label,
             sort_btn,
-            sort_date,
-            sort_name,
+            sort_items,
             sort_syncing,
             actions_box,
             state,
@@ -152,9 +142,8 @@ impl Toolbar {
 
     fn sync_sort_button(&self, state: &AppState) {
         self.sort_syncing.set(true);
-        match state.sort {
-            SortMode::Date => self.sort_date.set_active(true),
-            SortMode::Name => self.sort_name.set_active(true),
+        for (mode, btn) in &self.sort_items {
+            btn.set_active(*mode == state.sort);
         }
         self.sort_syncing.set(false);
         self.sort_btn.set_tooltip_text(Some(state.sort.tooltip()));

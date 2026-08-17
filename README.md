@@ -53,7 +53,7 @@ Grid for the folder. Single view for one image, with a filmstrip along the botto
 | t / T | Slideshow on (+1s) / slower (off at 0) |
 | h / v | Flip horizontal / vertical |
 | u | Nearest-neighbor hint (pixel art) |
-| Sort icon | Date or name |
+| Sort icon | Newest / oldest, A–Z / Z–A, size, type |
 | Filmstrip button | Show or hide the strip (remembered) |
 | Ctrl+R / Ctrl+Shift+R | Rotate 90° / 270° (display only) |
 | Ctrl+S | Write rotation and flips to the file |
@@ -70,7 +70,7 @@ Grid for the folder. Single view for one image, with a filmstrip along the botto
 | F11 / f | Fullscreen |
 | q | Quit |
 
-Sort lives in the toolbar: a **Sort** menu with Date or Name.
+Sort lives in the toolbar: newest or oldest, A–Z or Z–A, largest or smallest, or type.
 
 ## Formats
 
@@ -86,3 +86,11 @@ cargo build --release
 ```
 
 The binary is `target/release/omarchy-imageview`.
+
+## Credits
+
+This project uses icons from [Remix Icon](https://remixicon.com),
+licensed under the Remix Icon License v1.0.
+Icons by Remix Icon (https://remixicon.com).
+
+The seven toolbar glyphs live in `assets/icons/` with the license text.

@@ -6,36 +6,98 @@ use super::formats::is_supported;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
     Date,
+    DateOldest,
     Name,
+    NameZa,
+    Size,
+    SizeSmallest,
+    Type,
 }
 
 impl SortMode {
+    pub const ALL: &'static [Self] = &[
+        Self::Date,
+        Self::DateOldest,
+        Self::Name,
+        Self::NameZa,
+        Self::Size,
+        Self::SizeSmallest,
+        Self::Type,
+    ];
+
     pub fn next(self) -> Self {
         match self {
-            Self::Date => Self::Name,
-            Self::Name => Self::Date,
+            Self::Date => Self::DateOldest,
+            Self::DateOldest => Self::Name,
+            Self::Name => Self::NameZa,
+            Self::NameZa => Self::Size,
+            Self::Size => Self::SizeSmallest,
+            Self::SizeSmallest => Self::Type,
+            Self::Type => Self::Date,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Date => "date",
+            Self::DateOldest => "date-oldest",
             Self::Name => "name",
+            Self::NameZa => "name-za",
+            Self::Size => "size",
+            Self::SizeSmallest => "size-smallest",
+            Self::Type => "type",
         }
     }
 
     pub fn parse(s: &str) -> Self {
-        if s.eq_ignore_ascii_case("name") {
-            Self::Name
-        } else {
-            Self::Date
+        match s.to_ascii_lowercase().as_str() {
+            "date-oldest" => Self::DateOldest,
+            "name" | "name-az" => Self::Name,
+            "name-za" => Self::NameZa,
+            "size" | "size-largest" => Self::Size,
+            "size-smallest" => Self::SizeSmallest,
+            "type" | "kind" => Self::Type,
+            _ => Self::Date,
         }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Date => "Newest first",
+            Self::DateOldest => "Oldest first",
+            Self::Name => "A–Z",
+            Self::NameZa => "Z–A",
+            Self::Size => "Largest",
+            Self::SizeSmallest => "Smallest",
+            Self::Type => "Type",
+        }
+    }
+
+    pub fn action(self) -> &'static str {
+        match self {
+            Self::Date => "sort-date",
+            Self::DateOldest => "sort-date-oldest",
+            Self::Name => "sort-name",
+            Self::NameZa => "sort-name-za",
+            Self::Size => "sort-size",
+            Self::SizeSmallest => "sort-size-smallest",
+            Self::Type => "sort-type",
+        }
+    }
+
+    pub fn from_action(action: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|m| m.action() == action)
     }
 
     pub fn tooltip(self) -> &'static str {
         match self {
-            Self::Date => "Sorted by date",
-            Self::Name => "Sorted by name",
+            Self::Date => "Sorted newest first",
+            Self::DateOldest => "Sorted oldest first",
+            Self::Name => "Sorted A–Z",
+            Self::NameZa => "Sorted Z–A",
+            Self::Size => "Sorted largest first",
+            Self::SizeSmallest => "Sorted smallest first",
+            Self::Type => "Sorted by type",
         }
     }
 }
@@ -55,7 +117,7 @@ pub fn scan_folder(directory: &Path, sort: SortMode) -> Vec<PathBuf> {
         }
     };
 
-    let mut files: Vec<(PathBuf, std::time::SystemTime)> = read
+    let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = read
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
@@ -65,28 +127,35 @@ pub fn scan_folder(directory: &Path, sort: SortMode) -> Vec<PathBuf> {
                     .unwrap_or(false)
         })
         .map(|p| {
-            let mtime = std::fs::metadata(&p)
-                .and_then(|m| m.modified())
+            let meta = std::fs::metadata(&p).ok();
+            let mtime = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            (p, mtime)
+            let size = meta.map(|m| m.len()).unwrap_or(0);
+            (p, mtime, size)
         })
         .collect();
 
     files.sort_by(|a, b| {
-        let name_cmp = || {
-            natord::compare(
-                &a.0.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
-                &b.0.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
-            )
-        };
+        let name_a = a.0.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let name_b = b.0.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let name_cmp = || natord::compare(&name_a, &name_b);
+        let ext_a = a.0.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+        let ext_b = b.0.extension().unwrap_or_default().to_string_lossy().to_lowercase();
         match sort {
             SortMode::Date => b.1.cmp(&a.1).then_with(name_cmp),
+            SortMode::DateOldest => a.1.cmp(&b.1).then_with(name_cmp),
             SortMode::Name => name_cmp(),
+            SortMode::NameZa => name_cmp().reverse(),
+            SortMode::Size => b.2.cmp(&a.2).then_with(name_cmp),
+            SortMode::SizeSmallest => a.2.cmp(&b.2).then_with(name_cmp),
+            SortMode::Type => ext_a.cmp(&ext_b).then_with(name_cmp),
         }
     });
 
     log::info!("scan_folder: {} images in {}", files.len(), directory.display());
-    files.into_iter().map(|(p, _)| p).collect()
+    files.into_iter().map(|(p, _, _)| p).collect()
 }
 
 pub struct FolderMonitor {

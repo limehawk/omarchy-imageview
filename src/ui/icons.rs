@@ -1,6 +1,6 @@
-//! Toolbar icons from [Hugeicons](https://github.com/hugeicons/hugeicons)
-//! (MIT, Stroke Rounded). Tinted to the Omarchy foreground and rasterized
-//! at the widget scale.
+//! Toolbar icons from [Remix Icon](https://remixicon.com/) (Line).
+//! Remix Icon License v1.0 — see `assets/icons/LICENSE.md`.
+//! Tinted to the Omarchy foreground and rasterized at the widget scale.
 
 use gdk4 as gdk;
 use gtk4::gdk_pixbuf::Pixbuf;
@@ -9,32 +9,32 @@ use gtk4::prelude::*;
 use gtk4::{self, glib};
 
 const SIZE: i32 = 24;
-const SOURCE_STROKE: &str = "#141B34";
+const SOURCE_STROKE: &str = "currentColor";
 
 pub struct Icon {
     pub svg: &'static str,
 }
 
 pub const SAVE: Icon = Icon {
-    svg: include_str!("../../assets/icons/floppy-disk.svg"),
+    svg: include_str!("../../assets/icons/save-line.svg"),
 };
 pub const ROTATE: Icon = Icon {
-    svg: include_str!("../../assets/icons/rotate-01.svg"),
+    svg: include_str!("../../assets/icons/reset-right-line.svg"),
 };
 pub const COPY: Icon = Icon {
-    svg: include_str!("../../assets/icons/copy-01.svg"),
+    svg: include_str!("../../assets/icons/file-copy-line.svg"),
 };
 pub const TRASH: Icon = Icon {
-    svg: include_str!("../../assets/icons/delete-02.svg"),
+    svg: include_str!("../../assets/icons/delete-bin-line.svg"),
 };
 pub const FILMSTRIP: Icon = Icon {
-    svg: include_str!("../../assets/icons/carousel-horizontal.svg"),
+    svg: include_str!("../../assets/icons/film-line.svg"),
 };
 pub const SORT: Icon = Icon {
-    svg: include_str!("../../assets/icons/sorting-01.svg"),
+    svg: include_str!("../../assets/icons/sort-desc.svg"),
 };
 pub const INFO: Icon = Icon {
-    svg: include_str!("../../assets/icons/information-circle.svg"),
+    svg: include_str!("../../assets/icons/information-line.svg"),
 };
 
 fn foreground_hex() -> String {
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hugeicons_are_stroke_svgs() {
+    fn remix_are_filled_svgs() {
         for icon in [&SAVE, &ROTATE, &COPY, &TRASH, &FILMSTRIP, &INFO, &SORT] {
             assert!(icon.svg.contains("viewBox=\"0 0 24 24\""));
             assert!(icon.svg.contains(SOURCE_STROKE));

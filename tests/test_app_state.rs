@@ -35,12 +35,13 @@ fn test_cycle_sort_persists() {
     let mut state = AppState::new(Some(config.path().to_path_buf()));
     assert_eq!(state.sort, SortMode::Date);
     state.cycle_sort();
-    assert_eq!(state.sort, SortMode::Name);
+    assert_eq!(state.sort, SortMode::DateOldest);
+    assert!(state.set_sort(SortMode::Size));
     state.save();
 
     let mut state2 = AppState::new(Some(config.path().to_path_buf()));
     state2.restore();
-    assert_eq!(state2.sort, SortMode::Name);
+    assert_eq!(state2.sort, SortMode::Size);
 }
 
 #[test]
