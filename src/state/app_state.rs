@@ -174,10 +174,6 @@ impl AppState {
         self.slideshow_secs
     }
 
-    pub fn cycle_sort(&mut self) {
-        self.sort = self.sort.next();
-    }
-
     /// Returns true if the mode changed.
     pub fn set_sort(&mut self, sort: SortMode) -> bool {
         if self.sort == sort {

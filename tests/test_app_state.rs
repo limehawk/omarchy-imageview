@@ -30,12 +30,10 @@ fn test_initial_state() {
 }
 
 #[test]
-fn test_cycle_sort_persists() {
+fn test_sort_persists() {
     let config = tempfile::tempdir().unwrap();
     let mut state = AppState::new(Some(config.path().to_path_buf()));
     assert_eq!(state.sort, SortMode::Date);
-    state.cycle_sort();
-    assert_eq!(state.sort, SortMode::DateOldest);
     assert!(state.set_sort(SortMode::Size));
     state.save();
 

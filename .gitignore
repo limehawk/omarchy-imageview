@@ -5,6 +5,9 @@
 # Agent planning notes — not part of the product
 docs/superpowers/
 
+# Local icon pickers — not the product
+playgrounds/
+
 # ===== Managed by gitignore-builder — do not edit below this line =====
 # Templates: Rust
 # Updated: 2026-04-08

@@ -1,15 +1,10 @@
-mod core;
-mod state;
-mod ui;
-mod actions;
-
 use gtk4::prelude::*;
 use gtk4::gio;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use state::app_state::AppState;
-use ui::window::ImageViewerWindow;
+use omarchy_imageview::state::app_state::AppState;
+use omarchy_imageview::ui::window::ImageViewerWindow;
 
 const APP_ID: &str = "com.omarchy.imageview";
 

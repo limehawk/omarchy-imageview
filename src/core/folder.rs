@@ -25,18 +25,6 @@ impl SortMode {
         Self::Type,
     ];
 
-    pub fn next(self) -> Self {
-        match self {
-            Self::Date => Self::DateOldest,
-            Self::DateOldest => Self::Name,
-            Self::Name => Self::NameZa,
-            Self::NameZa => Self::Size,
-            Self::Size => Self::SizeSmallest,
-            Self::SizeSmallest => Self::Type,
-            Self::Type => Self::Date,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Date => "date",
