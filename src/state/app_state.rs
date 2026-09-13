@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crate::core::folder::SortMode;
@@ -103,6 +104,19 @@ impl AppState {
             }
         } else {
             self.index = 0;
+        }
+    }
+
+    /// Rescan the open folder from disk, keeping the current file if it still exists.
+    ///
+    /// Drops every `RefCell` borrow before `borrow_mut`. The GIO folder-monitor
+    /// callback runs this; a nested `borrow` across `load_folder` panics there
+    /// (`RefCell already borrowed`) and aborts because the handler cannot unwind.
+    pub fn refresh_from_disk(state: &RefCell<Self>) {
+        let current = state.borrow().current_file().map(|p| p.to_path_buf());
+        let folder = state.borrow().current_folder.clone();
+        if let Some(folder) = folder {
+            state.borrow_mut().load_folder(&folder, current.as_deref());
         }
     }
 
