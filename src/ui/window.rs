@@ -512,7 +512,7 @@ impl ImageViewerWindow {
                         toolbar.update_grid_mode();
                     }
                     ViewMode::Single => {
-                        single_view.borrow().refresh_image();
+                        single_view.borrow().load();
                         toolbar.update_single_mode();
                     }
                 }
