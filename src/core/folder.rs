@@ -146,6 +146,19 @@ pub fn scan_folder(directory: &Path, sort: SortMode) -> Vec<PathBuf> {
     files.into_iter().map(|(p, _, _)| p).collect()
 }
 
+pub fn watch_event_reloads(event: gio::FileMonitorEvent) -> bool {
+    matches!(
+        event,
+        gio::FileMonitorEvent::Created
+            | gio::FileMonitorEvent::Deleted
+            | gio::FileMonitorEvent::MovedIn
+            | gio::FileMonitorEvent::MovedOut
+            | gio::FileMonitorEvent::Renamed
+            | gio::FileMonitorEvent::Moved
+            | gio::FileMonitorEvent::ChangesDoneHint
+    )
+}
+
 pub struct FolderMonitor {
     _monitor: gio::FileMonitor,
 }
@@ -162,16 +175,32 @@ impl FolderMonitor {
             if !super::formats::is_supported(&filename) {
                 return;
             }
-            match event {
-                gio::FileMonitorEvent::Created
-                | gio::FileMonitorEvent::Deleted
-                | gio::FileMonitorEvent::MovedIn
-                | gio::FileMonitorEvent::MovedOut => {
-                    on_changed();
-                }
-                _ => {}
+            if watch_event_reloads(event) {
+                on_changed();
             }
         });
         Some(Self { _monitor: monitor })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watch_reloads_on_create_delete_rename_and_write_done() {
+        for event in [
+            gio::FileMonitorEvent::Created,
+            gio::FileMonitorEvent::Deleted,
+            gio::FileMonitorEvent::MovedIn,
+            gio::FileMonitorEvent::MovedOut,
+            gio::FileMonitorEvent::Renamed,
+            gio::FileMonitorEvent::Moved,
+            gio::FileMonitorEvent::ChangesDoneHint,
+        ] {
+            assert!(watch_event_reloads(event), "{event:?} should reload");
+        }
+        assert!(!watch_event_reloads(gio::FileMonitorEvent::Changed));
+        assert!(!watch_event_reloads(gio::FileMonitorEvent::AttributeChanged));
     }
 }

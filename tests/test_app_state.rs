@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
 use image::{DynamicImage, RgbImage};
 use omarchy_imageview::core::folder::SortMode;
@@ -188,4 +189,26 @@ fn test_remove_file() {
     state.remove_file(&removed);
     assert_eq!(state.files.len(), count - 1);
     assert!(!state.files.contains(&removed));
+}
+
+#[test]
+fn test_refresh_from_disk_create_and_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = tempfile::tempdir().unwrap();
+    let keep = save_img(dir.path(), "keep.jpg");
+    let gone = save_img(dir.path(), "gone.jpg");
+
+    let state = RefCell::new(AppState::new(Some(config.path().to_path_buf())));
+    state.borrow_mut().load_folder(dir.path(), Some(&keep));
+    assert_eq!(state.borrow().current_file(), Some(keep.as_path()));
+
+    let created = save_img(dir.path(), "new.jpg");
+    AppState::refresh_from_disk(&state);
+    assert!(state.borrow().files.contains(&created));
+    assert_eq!(state.borrow().current_file(), Some(keep.as_path()));
+
+    std::fs::remove_file(&gone).unwrap();
+    AppState::refresh_from_disk(&state);
+    assert!(!state.borrow().files.contains(&gone));
+    assert_eq!(state.borrow().current_file(), Some(keep.as_path()));
 }

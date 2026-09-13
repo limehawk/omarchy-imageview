@@ -504,10 +504,7 @@ impl ImageViewerWindow {
             let single_view = self.single_view.clone();
             let toolbar = self.toolbar.clone();
             let monitor = FolderMonitor::new(&folder_path, move || {
-                let current = state.borrow().current_file().map(|p| p.to_path_buf());
-                if let Some(ref folder) = state.borrow().current_folder.clone() {
-                    state.borrow_mut().load_folder(folder, current.as_deref());
-                }
+                AppState::refresh_from_disk(&state);
                 let mode = state.borrow().view_mode;
                 match mode {
                     ViewMode::Grid => {
@@ -515,7 +512,7 @@ impl ImageViewerWindow {
                         toolbar.update_grid_mode();
                     }
                     ViewMode::Single => {
-                        single_view.borrow().refresh_image();
+                        single_view.borrow().load();
                         toolbar.update_single_mode();
                     }
                 }
