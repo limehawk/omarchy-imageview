@@ -1,5 +1,6 @@
 use omarchy_imageview::core::image_loader::{
-    load_image, svg_exceeds_cap, svg_intrinsic_size, MAX_SVG_EDGE,
+    load_image, load_svg_at, svg_exceeds_cap, svg_intrinsic_size, svg_target_size,
+    MAX_SVG_EDGE,
 };
 
 #[test]
@@ -29,7 +30,27 @@ fn flags_huge_aseprite_export() {
 }
 
 #[test]
-fn load_image_skips_huge_svg() {
+fn fit_uses_the_view() {
+    assert_eq!(svg_target_size(1200, 800, true, 1.0, Some((1024, 1024))), (1200, 800));
+}
+
+#[test]
+fn actual_caps_huge_intrinsic() {
+    assert_eq!(
+        svg_target_size(1200, 800, false, 1.0, Some((633632, 543914))),
+        (MAX_SVG_EDGE, MAX_SVG_EDGE)
+    );
+}
+
+#[test]
+fn zoom_scales_the_view_and_caps() {
+    assert_eq!(svg_target_size(100, 100, false, 2.0, Some((10, 10))), (200, 200));
+    let (w, h) = svg_target_size(8000, 8000, false, 2.0, None);
+    assert_eq!((w, h), (MAX_SVG_EDGE, MAX_SVG_EDGE));
+}
+
+#[test]
+fn load_image_caps_huge_svg() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("huge.svg");
     std::fs::write(
@@ -39,7 +60,28 @@ fn load_image_skips_huge_svg() {
            </svg>"#,
     )
     .unwrap();
-    assert!(load_image(&path).is_none());
+    let img = load_image(&path).expect("huge svg should raster at the cap");
+    assert!(img.width() <= MAX_SVG_EDGE);
+    assert!(img.height() <= MAX_SVG_EDGE);
+    assert!(img.width() > 0 && img.height() > 0);
+}
+
+#[test]
+fn load_svg_at_fits_inside_max() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tiny.svg");
+    std::fs::write(
+        &path,
+        concat!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'>",
+            "<rect width='10' height='10' fill='red'/></svg>",
+        ),
+    )
+    .unwrap();
+    let img = load_svg_at(&path, 4, 4).expect("raster at 4px");
+    assert!(img.width() <= 4);
+    assert!(img.height() <= 4);
+    assert!(img.width() > 0 && img.height() > 0);
 }
 
 #[test]

@@ -6,8 +6,7 @@ use image::codecs::webp::WebPDecoder;
 use image::{AnimationDecoder, DynamicImage, Frame, RgbaImage};
 use super::formats::{detect_format, FormatGroup};
 
-/// Wider than this, or taller, and we skip the SVG. Glycin/rsvg would
-/// otherwise try to rasterize Aseprite/Illustrator exports at native size.
+/// Hard ceiling for one SVG raster. Viewport draws use this too.
 pub const MAX_SVG_EDGE: u32 = 8192;
 
 /// Load an image file, returning None on failure or unsupported format.
@@ -66,21 +65,58 @@ pub fn svg_intrinsic_size(svg: &str) -> Option<(u32, u32)> {
     view_box_size(tag)
 }
 
+pub fn svg_target_size(
+    view_w: u32,
+    view_h: u32,
+    zoom_fit: bool,
+    zoom: f64,
+    intrinsic: Option<(u32, u32)>,
+) -> (u32, u32) {
+    let cap = |v: u32| v.clamp(1, MAX_SVG_EDGE);
+    if zoom_fit {
+        return (cap(view_w), cap(view_h));
+    }
+    if (zoom - 1.0).abs() < f64::EPSILON {
+        if let Some((iw, ih)) = intrinsic {
+            return (cap(iw), cap(ih));
+        }
+    }
+    let z = zoom.max(0.1);
+    (
+        cap(((view_w as f64) * z).ceil() as u32),
+        cap(((view_h as f64) * z).ceil() as u32),
+    )
+}
+
 fn load_svg(path: &Path) -> Option<DynamicImage> {
     let head = std::fs::read_to_string(path).ok()?;
     if let Some((w, h)) = svg_intrinsic_size(&head) {
         if svg_exceeds_cap(w, h) {
             log::warn!(
-                "load_svg: skip {} ({}x{}, cap {})",
+                "load_svg: cap {} ({}x{}, max {})",
                 path.display(),
                 w,
                 h,
                 MAX_SVG_EDGE
             );
-            return None;
+            return load_svg_at(path, MAX_SVG_EDGE, MAX_SVG_EDGE);
         }
     }
-    let out = match std::process::Command::new("rsvg-convert").arg(path).output() {
+    raster_svg(path, None)
+}
+
+pub fn load_svg_at(path: &Path, max_w: u32, max_h: u32) -> Option<DynamicImage> {
+    let max_w = max_w.clamp(1, MAX_SVG_EDGE);
+    let max_h = max_h.clamp(1, MAX_SVG_EDGE);
+    raster_svg(path, Some((max_w, max_h)))
+}
+
+fn raster_svg(path: &Path, max: Option<(u32, u32)>) -> Option<DynamicImage> {
+    let mut cmd = std::process::Command::new("rsvg-convert");
+    if let Some((w, h)) = max {
+        cmd.args(["-a", "-w", &w.to_string(), "-h", &h.to_string()]);
+    }
+    let out = match cmd.arg(path).output() {
         Ok(o) => o,
         Err(e) => {
             log::error!("load_svg: rsvg-convert failed for {}: {e}", path.display());
