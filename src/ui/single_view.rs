@@ -2,7 +2,7 @@ use gdk4 as gdk;
 use gdk4::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{self, glib};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use super::filmstrip::Filmstrip;
@@ -19,6 +19,7 @@ pub struct SingleView {
     load_epoch: Rc<std::cell::Cell<u64>>,
     anim_playing: Rc<std::cell::Cell<bool>>,
     is_animated: Rc<std::cell::Cell<bool>>,
+    is_svg: Rc<Cell<bool>>,
     on_navigate: Rc<RefCell<Option<Box<dyn Fn()>>>>,
 }
 
@@ -55,6 +56,7 @@ impl SingleView {
             load_epoch,
             anim_playing: Rc::new(std::cell::Cell::new(true)),
             is_animated: Rc::new(std::cell::Cell::new(false)),
+            is_svg: Rc::new(Cell::new(false)),
             on_navigate: Rc::new(RefCell::new(None)),
         }));
 
@@ -69,6 +71,8 @@ impl SingleView {
 
         // --- Filmstrip selection callback ---
         Self::setup_filmstrip_callback(&view);
+
+        setup_svg_resize(&view);
 
         view
     }
@@ -184,6 +188,7 @@ impl SingleView {
         self.load_epoch.set(epoch);
         self.anim_playing.set(true);
         self.is_animated.set(false);
+        self.is_svg.set(false);
 
         let path = {
             let state = self.state.borrow();
@@ -199,26 +204,23 @@ impl SingleView {
         };
         log::debug!("load_current_image: epoch={epoch} path={}", path.display());
 
-        // Check if SVG
         let filename = path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if crate::core::formats::detect_format(&filename)
-            == Some(crate::core::formats::FormatGroup::Svg)
-        {
-            if let Some(tex) = crate::core::texture::svg_to_texture(&path) {
-                self.picture.set_paintable(Some(&tex));
-                *self.current_texture.borrow_mut() = Some(tex);
-                self.apply_display();
-            }
-            return;
-        }
 
         // Animated formats (GIF, animated WebP): kick off the animated path.
         // The worker thread itself probes the file — if it turns out to be
         // a static image, that path falls through to static decode.
+        if crate::core::formats::detect_format(&filename)
+            == Some(crate::core::formats::FormatGroup::Svg)
+        {
+            self.is_svg.set(true);
+            self.spawn_svg(path, epoch);
+            return;
+        }
+
         let lower = filename.to_ascii_lowercase();
         if lower.ends_with(".gif") || lower.ends_with(".webp") {
             self.load_animated(path, epoch);
@@ -382,7 +384,11 @@ impl SingleView {
         st.zoom = (st.zoom * 1.1).min(10.0);
         let z = st.zoom;
         drop(st);
-        self.apply_zoom(z);
+        if self.is_svg.get() {
+            self.rerender_svg();
+        } else {
+            self.apply_zoom(z);
+        }
     }
 
     pub fn zoom_out(&self) {
@@ -391,7 +397,11 @@ impl SingleView {
         st.zoom = (st.zoom / 1.1).max(0.1);
         let z = st.zoom;
         drop(st);
-        self.apply_zoom(z);
+        if self.is_svg.get() {
+            self.rerender_svg();
+        } else {
+            self.apply_zoom(z);
+        }
     }
 
     pub fn zoom_to_fit(&self) {
@@ -400,7 +410,11 @@ impl SingleView {
         st.zoom = 1.0;
         st.scale_mode = ScaleMode::Fit;
         drop(st);
-        self.apply_display();
+        if self.is_svg.get() {
+            self.rerender_svg();
+        } else {
+            self.apply_display();
+        }
     }
 
     pub fn zoom_to_actual(&self) {
@@ -409,15 +423,27 @@ impl SingleView {
         st.zoom = 1.0;
         st.scale_mode = ScaleMode::Actual;
         drop(st);
-        self.apply_display();
+        if self.is_svg.get() {
+            self.rerender_svg();
+        } else {
+            self.apply_display();
+        }
     }
 
     pub fn cycle_scale_mode(&self) {
         self.state.borrow_mut().cycle_scale_mode();
-        self.apply_display();
+        if self.is_svg.get() {
+            self.rerender_svg();
+        } else {
+            self.apply_display();
+        }
     }
 
     pub fn apply_display(&self) {
+        if self.is_svg.get() {
+            self.rerender_svg();
+            return;
+        }
         apply_picture_scale(&self.picture, &self.state.borrow());
         if !self.state.borrow().zoom_fit && self.state.borrow().zoom != 1.0 {
             let z = self.state.borrow().zoom;
@@ -600,6 +626,104 @@ impl SingleView {
         let last = self.state.borrow().files.len().saturating_sub(1);
         self.state.borrow_mut().navigate_to(last);
         self.refresh_image();
+    }
+}
+
+fn setup_svg_resize(view: &Rc<RefCell<SingleView>>) {
+    let last = Rc::new(Cell::new((0i32, 0i32)));
+    let gen = Rc::new(Cell::new(0u64));
+    let view_ref = view.clone();
+    view.borrow().scrolled_window.add_tick_callback(move |w, _| {
+        let sz = (w.width(), w.height());
+        if sz == last.get() {
+            return glib::ControlFlow::Continue;
+        }
+        last.set(sz);
+        if !view_ref.borrow().is_svg.get() {
+            return glib::ControlFlow::Continue;
+        }
+        let n = gen.get().wrapping_add(1);
+        gen.set(n);
+        let view_ref = view_ref.clone();
+        let gen = gen.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+            if gen.get() != n {
+                return;
+            }
+            view_ref.borrow().rerender_svg();
+        });
+        glib::ControlFlow::Continue
+    });
+}
+
+impl SingleView {
+    fn rerender_svg(&self) {
+        let Some(path) = self.state.borrow().current_file().map(|p| p.to_path_buf()) else {
+            return;
+        };
+        let epoch = self.load_epoch.get().wrapping_add(1);
+        self.load_epoch.set(epoch);
+        self.spawn_svg(path, epoch);
+    }
+
+    fn spawn_svg(&self, path: std::path::PathBuf, epoch: u64) {
+        let view_w = self.scrolled_window.width();
+        let view_h = self.scrolled_window.height();
+        let (view_w, view_h) = if view_w < 32 || view_h < 32 {
+            (800u32, 600u32)
+        } else {
+            (view_w as u32, view_h as u32)
+        };
+        let (zoom_fit, zoom) = {
+            let st = self.state.borrow();
+            (st.zoom_fit, st.zoom)
+        };
+        let intrinsic = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| crate::core::image_loader::svg_intrinsic_size(&s));
+        let (tw, th) = crate::core::image_loader::svg_target_size(
+            view_w, view_h, zoom_fit, zoom, intrinsic,
+        );
+
+        let picture = self.picture.clone();
+        let current_texture = self.current_texture.clone();
+        let load_epoch = self.load_epoch.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Some(img) = crate::core::image_loader::load_svg_at(&path, tw, th) {
+                let rgba = img.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                let _ = tx.send((rgba.into_raw(), w, h));
+            }
+        });
+        glib::idle_add_local(move || match rx.try_recv() {
+            Ok((raw, w, h)) => {
+                if load_epoch.get() != epoch {
+                    return glib::ControlFlow::Break;
+                }
+                let texture = gdk::MemoryTexture::new(
+                    w as i32,
+                    h as i32,
+                    gdk::MemoryFormat::R8g8b8a8,
+                    &glib::Bytes::from_owned(raw),
+                    (w * 4) as usize,
+                );
+                picture.set_paintable(Some(&texture));
+                *current_texture.borrow_mut() = Some(texture.clone().upcast());
+                if zoom_fit {
+                    picture.set_content_fit(gtk4::ContentFit::Contain);
+                    picture.set_can_shrink(true);
+                    picture.set_size_request(-1, -1);
+                } else {
+                    picture.set_content_fit(gtk4::ContentFit::Fill);
+                    picture.set_can_shrink(false);
+                    picture.set_size_request(texture.width(), texture.height());
+                }
+                glib::ControlFlow::Break
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+        });
     }
 }
 

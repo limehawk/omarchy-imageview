@@ -4,7 +4,7 @@ use std::path::Path;
 pub enum FormatGroup {
     /// Raster formats we can decode to a bitmap
     Image,
-    /// SVG — loaded via gdk4::Texture::from_filename (librsvg)
+    /// SVG — decoded with rsvg-convert on a worker thread
     Svg,
 }
 

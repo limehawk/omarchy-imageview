@@ -6,8 +6,10 @@ use image::codecs::webp::WebPDecoder;
 use image::{AnimationDecoder, DynamicImage, Frame, RgbaImage};
 use super::formats::{detect_format, FormatGroup};
 
+/// Hard ceiling for one SVG raster. Viewport draws use this too.
+pub const MAX_SVG_EDGE: u32 = 8192;
+
 /// Load an image file, returning None on failure or unsupported format.
-/// SVGs are NOT handled here — they go through gdk4::Texture::from_filename.
 pub fn load_image(path: &Path) -> Option<DynamicImage> {
     if !path.is_file() {
         log::warn!("load_image: not a file: {}", path.display());
@@ -24,7 +26,7 @@ pub fn load_image(path: &Path) -> Option<DynamicImage> {
         .to_ascii_lowercase();
 
     let img = match fmt {
-        FormatGroup::Svg => return None,
+        FormatGroup::Svg => load_svg(path)?,
         FormatGroup::Image => match ext.as_str() {
             // libheif already applies irot/imir; don't also honor EXIF.
             "heic" | "heif" => load_heif(path)?,
@@ -45,6 +47,148 @@ pub fn load_image(path: &Path) -> Option<DynamicImage> {
         img.height()
     );
     Some(img)
+}
+
+pub fn svg_exceeds_cap(w: u32, h: u32) -> bool {
+    w > MAX_SVG_EDGE || h > MAX_SVG_EDGE
+}
+
+/// Pixel size from the opening `<svg>` tag. Width/height win over viewBox.
+pub fn svg_intrinsic_size(svg: &str) -> Option<(u32, u32)> {
+    let start = svg.find("<svg")?;
+    let rest = &svg[start..];
+    let end = rest.find('>')?;
+    let tag = &rest[..end];
+    if let (Some(w), Some(h)) = (attr_len(tag, "width"), attr_len(tag, "height")) {
+        return Some((w, h));
+    }
+    view_box_size(tag)
+}
+
+pub fn svg_target_size(
+    view_w: u32,
+    view_h: u32,
+    zoom_fit: bool,
+    zoom: f64,
+    intrinsic: Option<(u32, u32)>,
+) -> (u32, u32) {
+    let cap = |v: u32| v.clamp(1, MAX_SVG_EDGE);
+    if zoom_fit {
+        return (cap(view_w), cap(view_h));
+    }
+    if (zoom - 1.0).abs() < f64::EPSILON {
+        if let Some((iw, ih)) = intrinsic {
+            return (cap(iw), cap(ih));
+        }
+    }
+    let z = zoom.max(0.1);
+    (
+        cap(((view_w as f64) * z).ceil() as u32),
+        cap(((view_h as f64) * z).ceil() as u32),
+    )
+}
+
+fn load_svg(path: &Path) -> Option<DynamicImage> {
+    let head = std::fs::read_to_string(path).ok()?;
+    if let Some((w, h)) = svg_intrinsic_size(&head) {
+        if svg_exceeds_cap(w, h) {
+            log::warn!(
+                "load_svg: cap {} ({}x{}, max {})",
+                path.display(),
+                w,
+                h,
+                MAX_SVG_EDGE
+            );
+            return load_svg_at(path, MAX_SVG_EDGE, MAX_SVG_EDGE);
+        }
+    }
+    raster_svg(path, None)
+}
+
+pub fn load_svg_at(path: &Path, max_w: u32, max_h: u32) -> Option<DynamicImage> {
+    let max_w = max_w.clamp(1, MAX_SVG_EDGE);
+    let max_h = max_h.clamp(1, MAX_SVG_EDGE);
+    raster_svg(path, Some((max_w, max_h)))
+}
+
+fn raster_svg(path: &Path, max: Option<(u32, u32)>) -> Option<DynamicImage> {
+    let mut cmd = std::process::Command::new("rsvg-convert");
+    if let Some((w, h)) = max {
+        cmd.args(["-a", "-w", &w.to_string(), "-h", &h.to_string()]);
+    }
+    let out = match cmd.arg(path).output() {
+        Ok(o) => o,
+        Err(e) => {
+            log::error!("load_svg: rsvg-convert failed for {}: {e}", path.display());
+            return None;
+        }
+    };
+    if !out.status.success() {
+        log::warn!(
+            "load_svg: rsvg-convert exit {} for {}",
+            out.status,
+            path.display()
+        );
+        return None;
+    }
+    match image::load_from_memory(&out.stdout) {
+        Ok(img) => Some(img),
+        Err(e) => {
+            log::error!("load_svg: png decode failed for {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+fn attr_len(tag: &str, name: &str) -> Option<u32> {
+    parse_len(attr_raw(tag, name)?)
+}
+
+fn attr_raw<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let dq = format!("{name}=\"");
+    if let Some(i) = tag.find(&dq) {
+        let rest = &tag[i + dq.len()..];
+        return rest.split('"').next();
+    }
+    let sq = format!("{name}='");
+    if let Some(i) = tag.find(&sq) {
+        let rest = &tag[i + sq.len()..];
+        return rest.split('\'').next();
+    }
+    None
+}
+
+fn parse_len(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if s.ends_with('%') {
+        return None;
+    }
+    let s = s.trim_end_matches("px");
+    let f: f64 = s.parse().ok()?;
+    if !f.is_finite() || f <= 0.0 || f > u32::MAX as f64 {
+        return None;
+    }
+    Some(f.ceil() as u32)
+}
+
+fn view_box_size(tag: &str) -> Option<(u32, u32)> {
+    let raw = attr_raw(tag, "viewBox").or_else(|| attr_raw(tag, "viewbox"))?;
+    let nums: Vec<f64> = raw
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if nums.len() != 4 {
+        return None;
+    }
+    let (w, h) = (nums[2], nums[3]);
+    if !w.is_finite() || !h.is_finite() || w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    if w > u32::MAX as f64 || h > u32::MAX as f64 {
+        return None;
+    }
+    Some((w.ceil() as u32, h.ceil() as u32))
 }
 
 /// Apply a TIFF/EXIF orientation tag (1–8) to a decoded image.
