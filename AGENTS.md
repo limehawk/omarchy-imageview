@@ -37,18 +37,15 @@ cargo build --release
 ## Release
 Source of truth is Forgejo (`limehawk/omarchy-imageview`). GitHub is a push mirror.
 
+Forgejo Actions tests every PR and main push. A `v*` tag builds the amd64
+binary and attaches it to the Forgejo release.
+
 ```bash
-# 1. Tag + push (FJ origin mirrors to GitHub)
+# 1. Bump version in Cargo.toml, merge to main, tag, push
 git tag -a v0.X.X -m "omarchy-imageview 0.X.X"
 git push && git push --tags
 
-# 2. Attach the amd64 binary
-cargo build --release --locked
-cp target/release/omarchy-imageview /tmp/omarchy-imageview-linux-amd64
-gh release create v0.X.X /tmp/omarchy-imageview-linux-amd64
-fj release create v0.X.X -t v0.X.X -a /tmp/omarchy-imageview-linux-amd64
-
-# 3. AUR (tarball PKGBUILD lives only on the AUR repo)
+# 2. AUR (tarball PKGBUILD lives only on the AUR repo)
 curl -sL "https://github.com/limehawk/omarchy-imageview/archive/v0.X.X.tar.gz" | sha256sum
 git clone ssh://aur@aur.archlinux.org/omarchy-imageview.git /tmp/omarchy-imageview-aur
 # bump pkgver + sha256sums, then:
