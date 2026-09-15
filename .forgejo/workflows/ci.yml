@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Arch matches the desktop target. Bookworm GTK is 4.8 and libheif is
+    # too old for libheif-rs v1_21.
+    container: archlinux:latest
+    steps:
+      - name: Packages
+        run: pacman -Syu --noconfirm --needed base-devel git nodejs rust gtk4 libheif librsvg pkgconf
+
+      - uses: actions/checkout@v7
+
+      - name: Test
+        run: cargo test --locked

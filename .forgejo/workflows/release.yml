@@ -1,0 +1,62 @@
+# Cut a release: bump version in Cargo.toml, merge to main, tag vX.Y.Z, push the tag.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: build + changelog + publish
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Packages
+        run: pacman -Syu --noconfirm --needed base-devel git nodejs rust gtk4 libheif librsvg pkgconf
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          install -m 755 target/release/omarchy-imageview dist/omarchy-imageview-linux-amd64
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          {
+            echo "## ${TAG}"
+            echo
+            PREV=$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)
+            if [ -n "${PREV}" ]; then
+              echo "Changes since \`${PREV}\`:"
+              echo
+              git log --pretty=format:'- %s (%h)' "${PREV}..${TAG}"
+            else
+              echo "Commits:"
+              echo
+              git log --pretty=format:'- %s (%h)' -30 "${TAG}"
+            fi
+            echo
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Publish release
+        uses: actions/forgejo-release@v2
+        with:
+          direction: upload
+          release-dir: dist
+          release-notes-file: RELEASE_NOTES.md
+          tag: ${{ github.ref_name }}
