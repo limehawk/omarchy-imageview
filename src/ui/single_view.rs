@@ -199,22 +199,11 @@ impl SingleView {
         };
         log::debug!("load_current_image: epoch={epoch} path={}", path.display());
 
-        // Check if SVG
         let filename = path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if crate::core::formats::detect_format(&filename)
-            == Some(crate::core::formats::FormatGroup::Svg)
-        {
-            if let Some(tex) = crate::core::texture::svg_to_texture(&path) {
-                self.picture.set_paintable(Some(&tex));
-                *self.current_texture.borrow_mut() = Some(tex);
-                self.apply_display();
-            }
-            return;
-        }
 
         // Animated formats (GIF, animated WebP): kick off the animated path.
         // The worker thread itself probes the file — if it turns out to be
